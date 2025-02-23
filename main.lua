@@ -1,16 +1,10 @@
-local utils = require 'mp.utils'
-local options = require 'mp.options'
-
-local messages = nil
-local chat_overlay = nil
-local chat_hidden = false
-
-local is_windows = package.config:sub(1,1) ~= "/"
-local xdg_data_home = is_windows and "" or (os.getenv("XDG_DATA_HOME") or (os.getenv("HOME") .. "/.local/share"))
+local options = {
+    live_chat_directory = mp.command_native({"expand-path", "~~/live_chat"}),
+    chat_hidden = false
+}
 
 local opts = {}
 opts['auto-load'] = false
-opts['live-chat-directory'] = is_windows and 'C:/' or (xdg_data_home .. '/youtube-live-chats')
 opts['yt-dlp-path'] = 'yt-dlp'
 opts['show-author'] = true
 opts['author-color'] = 'random'
@@ -26,8 +20,30 @@ opts['message-break-anywhere'] = false
 opts['message-gap'] = 10
 opts['anchor'] = 1
 
-options.read_options(opts)
-options.read_options(opts, "mpv-youtube-chat")
+require("mp.options").read_options(opts)
+local utils = require("mp.utils")
+
+local messages = {}
+local current_filename
+local last_position = 0
+local chat_overlay = mp.create_osd_overlay("ass-events")
+chat_overlay.z = -1
+
+-- TODO: better way to do this that gives more consistent brightness in colors?
+local function string_to_color(str)
+    local hash = 5381
+    for i = 1, str:len() do
+        hash = (33 * hash + str:byte(i)) % 16777216
+    end
+    return hash
+end
+
+local function swap_color_string(str)
+    local r = str:sub(1, 2)
+    local g = str:sub(3, 4)
+    local b = str:sub(5, 6)
+    return b .. g .. r
+end
 
 local NORMAL = 0
 local SUPERCHAT = 1
@@ -43,7 +59,7 @@ local function split_string(input)
     return splits
 end
 
-function break_message(message, initial_length)
+local function break_message(message, initial_length)
     local max_line_length = opts['max-message-line-length']
     if max_line_length <= 0 then
         return message
@@ -61,7 +77,7 @@ function break_message(message, initial_length)
         end
         result = table.concat(lines, '\n')
     else
-        for _,v in ipairs(split_string(message)) do
+        for _, v in ipairs(split_string(message)) do
             current_length = current_length + #v
 
             if current_length > max_line_length then
@@ -76,32 +92,56 @@ function break_message(message, initial_length)
     return result
 end
 
-function format_message(message)
+local function chat_message_to_string(message)
+    if message.type == NORMAL then
+        if opts['show-author'] then
+            if opts['author-color'] == 'random' then
+                return string.format('{\\1c&H%06x&}{\\3c&H%s&}%s{\\1c&H%s&}{\\3c&H%s&}: %s', message.author_color,
+                    swap_color_string(opts['author-border-color']), message.author,
+                    swap_color_string(opts['message-color']), swap_color_string(opts['message-border-color']),
+                    break_message(message.contents, message.author:len() + 2))
+            elseif opts['author-color'] == 'none' then
+                return string.format('{\\3c&H%s&}%s{\\1c&H%s&}{\\3c&H%s&}: %s',
+                    swap_color_string(opts['author-border-color']), message.author,
+                    swap_color_string(opts['message-color']), swap_color_string(opts['message-border-color']),
+                    break_message(message.contents, message.author:len() + 2))
+            else
+                return string.format('{\\1c&H%s&}{\\3c&H%s&}%s{\\1c&H%s&}{\\3c&H%s&}: %s',
+                    swap_color_string(opts['author-color']), swap_color_string(opts['author-border-color']),
+                    message.author, swap_color_string(opts['message-color']),
+                    swap_color_string(opts['message-border-color']),
+                    break_message(message.contents, message.author:len() + 2))
+            end
+        else
+            return break_message(message.contents, 0)
+        end
+    elseif message.type == SUPERCHAT then
+        if message.contents then
+            return string.format('%s %s: %s', message.author, message.money,
+                break_message(message.contents, message.author:len() + message.money:len()))
+        else
+            return string.format('%s %s', message.author, message.money)
+        end
+    end
+end
+
+local function format_message(message)
     local message_string = chat_message_to_string(message)
     local result = nil
     local lines = message_string:gmatch("([^\n]*)\n?")
+
     for line in lines do
-        local formatting = '{\\an' .. opts['anchor'] .. '}'
-                        .. '{\\fs' .. opts['font-size'] .. '}'
-                        .. '{\\fn' .. opts['font'] .. '}'
-                        .. '{\\bord' .. opts['border-size'] .. '}'
-                        .. string.format(
-                               '{\\1c&H%s&}',
-                               swap_color_string(opts['message-color'])
-                           )
-                        .. string.format(
-                               '{\\3c&H%s&}',
-                               swap_color_string(opts['message-border-color'])
-                           )
+        local formatting = '{\\an' .. opts['anchor'] .. '}' .. '{\\fs' .. opts['font-size'] .. '}' .. '{\\fn' ..
+                               opts['font'] .. '}' .. '{\\bord' .. opts['border-size'] .. '}' ..
+                               string.format('{\\1c&H%s&}', swap_color_string(opts['message-color'])) ..
+                               string.format('{\\3c&H%s&}', swap_color_string(opts['message-border-color']))
         if message.type == SUPERCHAT then
-            formatting = formatting .. string.format(
-                '{\\1c&H%s&}{\\3c&%s&}',
-                swap_color_string(string.format('%06x', message.text_color)),
-                swap_color_string(string.format('%06x', message.border_color))
-            )
+            formatting = formatting ..
+                             string.format('{\\1c&H%s&}{\\3c&%s&}',
+                    swap_color_string(string.format('%06x', message.text_color)),
+                    swap_color_string(string.format('%06x', message.border_color)))
         end
-        local message_string = formatting
-                            .. line
+        local message_string = formatting .. line
         if result == nil then
             result = message_string
         else
@@ -115,204 +155,141 @@ function format_message(message)
     return result or ''
 end
 
-function chat_message_to_string(message)
-    if message.type == NORMAL then
-        if opts['show-author'] then
-            if opts['author-color'] == 'random' then
-                return string.format(
-                    '{\\1c&H%06x&}{\\3c&H%s&}%s{\\1c&H%s&}{\\3c&H%s&}: %s',
-                    message.author_color,
-                    swap_color_string(opts['author-border-color']),
-                    message.author,
-                    swap_color_string(opts['message-color']),
-                    swap_color_string(opts['message-border-color']),
-                    break_message(message.contents, message.author:len() + 2)
-                )
-            elseif opts['author-color'] == 'none' then
-                return string.format(
-                    '{\\3c&H%s&}%s{\\1c&H%s&}{\\3c&H%s&}: %s',
-                    swap_color_string(opts['author-border-color']),
-                    message.author,
-                    swap_color_string(opts['message-color']),
-                    swap_color_string(opts['message-border-color']),
-                    break_message(message.contents, message.author:len() + 2)
-                )
-            else
-                return string.format(
-                    '{\\1c&H%s&}{\\3c&H%s&}%s{\\1c&H%s&}{\\3c&H%s&}: %s',
-                    swap_color_string(opts['author-color']),
-                    swap_color_string(opts['author-border-color']),
-                    message.author,
-                    swap_color_string(opts['message-color']),
-                    swap_color_string(opts['message-border-color']),
-                    break_message(message.contents, message.author:len() + 2)
-                )
-            end
-        else
-            return break_message(message.contents, 0)
-        end
-    elseif message.type == SUPERCHAT then
-        if message.contents then
-            return string.format(
-                '%s %s: %s',
-                message.author,
-                message.money,
-                break_message(message.contents, message.author:len() + message.money:len())
-           )
-       else
-            return string.format(
-                '%s %s',
-                message.author,
-                message.money
-           )
-       end
+local function file_exists(path)
+    if not path then
+        return
     end
-end
+    local file_infou = utils.file_info(mp.command_native({"expand-path", path}))
 
-function file_exists(name)
-    local f = io.open(name, "r")
-    if f ~= nil then
-        f:close()
+    if file_infou and file_infou.is_file then
         return true
-    else
-        return false
     end
-end
 
-function download_live_chat(url, filename)
-    if file_exists(filename) then return end
-    mp.command_native({
-        name = "subprocess",
-        args = {
-            opts['yt-dlp-path'],
-            '--skip-download',
-            '--sub-langs=live_chat',
-            url,
-            '--write-sub',
-            '-o',
-            '%(id)s',
-            '-P',
-            opts['live-chat-directory']
-        }
-    })
-end
-
-function live_chat_exists_remote(url)
-    local result = mp.command_native({
-        name = "subprocess",
-        capture_stdout = true,
-        args = { opts['yt-dlp-path'], url, '--list-subs', '--quiet' }
-    })
-    if result.status == 0 then
-        return string.find(result.stdout, "live_chat")
-    end
     return false
 end
 
--- TODO: better way to do this that gives more consistent brightness in colors?
-function string_to_color(str)
-    local hash = 5381
-    for i = 1,str:len() do
-        hash = (33 * hash + str:byte(i)) % 16777216
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+-- Add these helper functions near the other utility functions
+
+function parse_text_message(renderer)
+    local id = renderer.authorExternalChannelId
+    local color = string_to_color(id)
+
+    local author = renderer.authorName and renderer.authorName.simpleText or '-'
+
+    local message = parse_message_runs(renderer.message.runs)
+
+    return {
+        type = NORMAL,
+        author = author,
+        author_color = color,
+        contents = message,
+        time = nil -- Will be set by caller
+    }
+end
+
+function parse_superchat_message(renderer)
+    local border_color = renderer.bodyBackgroundColor - 0xff000000
+    local text_color = renderer.bodyTextColor - 0xff000000
+    local money = renderer.purchaseAmountText.simpleText
+
+    local author = renderer.authorName and renderer.authorName.simpleText or '-'
+
+    local message = nil
+    if renderer.message then
+        message = parse_message_runs(renderer.message.runs)
     end
-    return hash
+
+    return {
+        type = SUPERCHAT,
+        author = author,
+        money = money,
+        border_color = border_color,
+        text_color = text_color,
+        contents = message,
+        time = nil -- Will be set by caller
+    }
 end
 
-function swap_color_string(str)
-    local r = str:sub(1, 2)
-    local g = str:sub(3, 4)
-    local b = str:sub(5, 6)
-    return b .. g .. r
+function parse_message_runs(runs)
+    local message = ""
+    for _, data in ipairs(runs) do
+        if data.text then
+            message = message .. data.text
+        elseif data.emoji then
+            if data.emoji.isCustomEmoji then
+                message = message .. data.emoji.shortcuts[1]
+            else
+                message = message .. data.emoji.emojiId
+            end
+        end
+    end
+    return message
 end
 
+function parse_chat_action(action, time)
+    if not action.addChatItemAction then
+        return nil
+    end
+
+    local item = action.addChatItemAction.item
+    local message = nil
+
+    if item.liveChatTextMessageRenderer then
+        message = parse_text_message(item.liveChatTextMessageRenderer)
+    elseif item.liveChatPaidMessageRenderer then
+        message = parse_superchat_message(item.liveChatPaidMessageRenderer)
+    end
+
+    if message then
+        message.time = time
+    end
+
+    return message
+end
+
+-- Modified generate_messages function
 function generate_messages(live_chat_json)
-
     local result = {}
     for line in io.lines(live_chat_json) do
         local entry = utils.parse_json(line)
         if entry.replayChatItemAction then
-            local time = tonumber(
-                entry.videoOffsetTimeMsec or
-                entry.replayChatItemAction.videoOffsetTimeMsec
-            )
-            for _,action in ipairs(entry.replayChatItemAction.actions) do
-                if action.addChatItemAction then
-                    if action.addChatItemAction.item.liveChatTextMessageRenderer then
-                        local liveChatTextMessageRenderer = action.addChatItemAction.item.liveChatTextMessageRenderer
-
-                        local id = liveChatTextMessageRenderer.authorExternalChannelId
-                        local color = string_to_color(id)
-
-                        local author
-                        if liveChatTextMessageRenderer.authorName then
-                            author = liveChatTextMessageRenderer.authorName.simpleText or 'NAME_ERROR'
-                        else
-                            author = '-'
-                        end
-
-                        local message_data = liveChatTextMessageRenderer.message
-                        local message = ""
-                        for _,data in ipairs(message_data.runs) do
-                            if data.text then
-                                message = message .. data.text
-                            elseif data.emoji then
-                                if data.emoji.isCustomEmoji then
-                                    message = message .. data.emoji.shortcuts[1]
-                                else
-                                    message = message .. data.emoji.emojiId
-                                end
-                            end
-                        end
-
-                        result[#result+1] = {
-                            type = NORMAL,
-                            author = author,
-                            author_color = color,
-                            contents = message,
-                            time = time
-                        }
-                    elseif action.addChatItemAction.item.liveChatPaidMessageRenderer then
-                        local liveChatPaidMessageRenderer = action.addChatItemAction.item.liveChatPaidMessageRenderer
-
-                        local border_color = liveChatPaidMessageRenderer.bodyBackgroundColor - 0xff000000
-                        local text_color = liveChatPaidMessageRenderer.bodyTextColor - 0xff000000
-                        local money = liveChatPaidMessageRenderer.purchaseAmountText.simpleText
-
-                        local author
-                        if liveChatPaidMessageRenderer.authorName then
-                            author = liveChatPaidMessageRenderer.authorName.simpleText or 'NAME_ERROR'
-                        else
-                            author = '-'
-                        end
-
-                        local message_data = liveChatPaidMessageRenderer.message
-                        local message = ""
-                        if message_data ~= nil then
-                            for _,data in ipairs(message_data.runs) do
-                                if data.text then
-                                    message = message .. data.text
-                                elseif data.emoji then
-                                    if data.emoji.isCustomEmoji then
-                                        message = message .. data.emoji.shortcuts[1]
-                                    else
-                                        message = message .. data.emoji.emojiId
-                                    end
-                                end
-                            end
-                        else
-                            message = nil
-                        end
-
-                        result[#result+1] = {
-                            type = SUPERCHAT,
-                            author = author,
-                            money = money,
-                            border_color = border_color,
-                            text_color = text_color,
-                            contents = message,
-                            time = time
-                        }
-                    end
+            local time = tonumber(entry.videoOffsetTimeMsec or entry.replayChatItemAction.videoOffsetTimeMsec)
+            for _, action in ipairs(entry.replayChatItemAction.actions) do
+                local message = parse_chat_action(action, time)
+                if message then
+                    table.insert(result, message)
                 end
             end
         end
@@ -320,31 +297,122 @@ function generate_messages(live_chat_json)
     return result
 end
 
-function load_live_chat(filename, interactive)
-    reset()
+-- Modified read_new_live_messages function
+function read_new_live_messages(filename)
+    local file = io.open(filename, "r")
+    if not file then
+        return nil
+    end
 
-    local generating_overlay = mp.create_osd_overlay("ass-events")
+    file:seek("set", last_position)
+
+    local new_messages = {}
+    for line in file:lines() do
+        local entry = utils.parse_json(line)
+        if entry.replayChatItemAction then
+            local time = tonumber(entry.videoOffsetTimeMsec or entry.replayChatItemAction.videoOffsetTimeMsec)
+            for _, action in ipairs(entry.replayChatItemAction.actions) do
+                local message = parse_chat_action(action, mp.get_property_native("time-pos") * 1000)
+                if message then
+                    table.insert(new_messages, message)
+                end
+            end
+        end
+    end
+
+    last_position = file:seek()
+    file:close()
+
+    return new_messages
+end
+
+local function update_chat_overlay(time)
+    if current_filename then
+        if file_exists(current_filename) then
+            messages = generate_messages(current_filename)
+        elseif file_exists(current_filename .. ".part") then
+            local new_messages = read_new_live_messages(current_filename .. ".part")
+            if new_messages then
+                for _, msg in ipairs(new_messages) do
+                    table.insert(messages, msg)
+                end
+            end
+        end
+    end
+
+    print(current_filename)
+    if options.chat_hidden or chat_overlay == nil or messages == nil or time == nil then
+        return
+    end
+
+    print("success")
+    local msec = time * 1000
+
+    chat_overlay.data = ''
+    print(tostring(#messages))
+    for i = 1, #messages do
+        local message = messages[i]
+        if message.time > msec then
+            break
+            print("aaa")
+        elseif msec <= message.time + 10000 then
+            local message_string = format_message(message)
+
+            if 1 <= 3 then
+
+                print("bbb")
+                chat_overlay.data = message_string .. '\n' .. '{\\fscy' .. 10 .. '}{\\fscx0}\\h{\fscy\fscx}' ..
+                                        chat_overlay.data
+
+            else
+                print("ccc")
+                chat_overlay.data = chat_overlay.data .. '{\\fscy' .. 10 .. '}{\\fscx0}\\h{\fscy\fscx}' .. '\n' ..
+                                        message_string
+            end
+        end
+    end
+    chat_overlay:update()
+end
+
+local function download_live_chat(url, filename)
+    if file_exists(filename) then
+        return
+    end
+    mp.command_native_async({
+        name = "subprocess",
+        args = {'yt-dlp', '--skip-download', '--sub-langs=live_chat', url, '--write-sub', '-o', '%(id)s', '-P',
+                options.live_chat_directory}
+    })
+end
+
+local function load_live_chat(filename)
+    local function live_chat_exists_remote(url)
+        local result = mp.command_native({
+            name = "subprocess",
+            capture_stdout = true,
+            args = {'yt-dlp', url, '--list-subs', '--quiet'}
+        })
+        if result.status == 0 then
+            return string.find(result.stdout, "live_chat")
+        end
+        return false
+    end
 
     local path = mp.get_property_native('path')
     if filename == nil then
-        local is_network = path:find('^http://') ~= nil or
-                           path:find('^https://') ~= nil
+        local is_network = path:find('^http://') ~= nil or path:find('^https://') ~= nil
         if is_network then
             local id = path:gsub("^.*\\?v=", ""):gsub("&.*", "")
-            filename = string.format(
-                "%s/%s.live_chat.json",
-                opts['live-chat-directory'],
-                id
-            )
+            filename = string.format("%s/%s.live_chat.json", options.live_chat_directory, id)
 
-            if not file_exists(filename) then
-                generating_overlay.data = 'Checking for live chat on remote...'
-                generating_overlay:update()
+            if not file_exists(filename) or not file_exists(filename .. ".part") then
+                print('Checking for live chat on remote...')
+
                 if live_chat_exists_remote(path) then
-                    generating_overlay.data = 'Downloading live chat replay...'
-                    generating_overlay:update()
+                    print('Downloading live chat replay...')
 
                     download_live_chat(path, filename)
+                    print('Done downloading live chat replay!!!!!!!!')
                 end
             end
         else
@@ -352,129 +420,13 @@ function load_live_chat(filename, interactive)
             filename = base_path .. '.live_chat.json'
         end
     end
-
-    generating_overlay.data = 'Parsing live chat replay...'
-    generating_overlay:update()
-
-    if filename ~= nil and file_exists(filename) then
-        messages = generate_messages(filename)
-    else
-        generating_overlay:remove()
-        if interactive then
-            mp.command('show-text "Unable to find live chat replay file!"')
-        end
-        return
-    end
-
-    generating_overlay:remove()
-
-    if not chat_overlay then
-        chat_overlay = mp.create_osd_overlay("ass-events")
-        chat_overlay.z = -1
-    end
-
+    current_filename = filename
     update_chat_overlay(mp.get_property_native("time-pos"))
 end
 
-function _load_live_chat(_, filename)
-    load_live_chat(filename)
-end
+mp.add_forced_key_binding("c", "load-chat", load_live_chat)
 
-function update_chat_overlay(time)
-    if chat_hidden or chat_overlay == nil or messages == nil or time == nil then
-        return
-    end
-
-    local msec = time * 1000
-
-    chat_overlay.data = ''
-    for i=1,#messages do
-        local message = messages[i]
-        if message.time > msec then
-            break
-        elseif msec <= message.time + opts['message-duration'] then
-            local message_string = format_message(message)
-            if opts['anchor'] <= 3 then
-                chat_overlay.data =    message_string
-                                    .. '\n'
-                                    .. '{\\fscy' .. opts['message-gap'] .. '}{\\fscx0}\\h{\fscy\fscx}'
-                                    .. chat_overlay.data
-            else
-                chat_overlay.data =    chat_overlay.data
-                                    .. '{\\fscy' .. opts['message-gap'] .. '}{\\fscx0}\\h{\fscy\fscx}'
-                                    .. '\n'
-                                    .. message_string
-            end
-        end
-    end
-    chat_overlay:update()
-end
-
-function _update_chat_overlay(_, time)
+local function _update_chat_overlay(_, time)
     update_chat_overlay(time)
 end
-
-function load_live_chat_interactive(filename)
-    load_live_chat(filename, true)
-end
-
-function set_chat_hidden(state)
-    if state == nil then
-        chat_hidden = not chat_hidden
-    else
-        chat_hidden = state == 'yes'
-    end
-
-    if chat_overlay ~= nil then
-        if chat_hidden then
-            mp.command('show-text "Youtube chat replay hidden"')
-            chat_overlay:remove()
-        else
-            mp.command('show-text "Youtube chat replay unhidden"')
-            update_chat_overlay(mp.get_property_native("time-pos"))
-        end
-    end
-end
-
-function set_chat_anchor(anchor)
-    if anchor == nil then
-        opts['anchor'] = (opts['anchor'] % 9) + 1
-    else
-        opts['anchor'] = tonumber(anchor)
-    end
-    if chat_overlay then
-        update_chat_overlay(mp.get_property_native("time-pos"))
-    end
-end
-
-function set_break_anywhere(state)
-    if state == nil then
-        opts['message-break-anywhere'] = not opts['message-break-anywhere']
-    else
-        opts['message-break-anywhere'] = state == 'yes'
-    end
-
-    if chat_overlay then
-        update_chat_overlay(mp.get_property_native("time-pos"))
-    end
-end
-
-function reset()
-    messages = nil
-    if chat_overlay then
-        chat_overlay:remove()
-    end
-    chat_overlay = nil
-end
-
-mp.add_key_binding(nil, "load-chat", load_live_chat_interactive)
-mp.add_key_binding(nil, "unload-chat", reset)
-mp.add_key_binding(nil, "chat-hidden", set_chat_hidden)
-mp.add_key_binding(nil, "chat-anchor", set_chat_anchor)
-mp.add_key_binding(nil, "break-anywhere", set_break_anywhere)
-
-if opts['auto-load'] then
-    mp.register_event("file-loaded", _load_live_chat)
-end
 mp.observe_property("time-pos", "native", _update_chat_overlay)
-mp.register_event("end-file", reset)
