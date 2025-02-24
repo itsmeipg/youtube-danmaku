@@ -24,8 +24,8 @@ local utils = require("mp.utils")
 local messages = {}
 local current_filename
 local download_finished = false
-local last_position
-local relative_live_time
+local last_position = nil
+local relative_live_time = nil
 local chat_overlay = mp.create_osd_overlay("ass-events")
 chat_overlay.z = -1
 
@@ -261,52 +261,49 @@ local function read_new_live_messages(filename)
         return nil
     end
 
-    if last_position == nil then
-        file:seek("end")
-        local current_pos = file:seek()
-
-        file:seek("set", math.max(0, current_pos - 1024))
-        local last_chunk = file:read("*a")
-
+    if not last_position then
+        print("fail")
         local last_line = nil
-        for line in last_chunk:gmatch("[^\r\n]+") do
-            last_line = line
-        end
-
-        if last_line then
-            local entry = utils.parse_json(last_line)
-            if entry and entry.isLive then
-                if entry.replayChatItemAction then
-                    local time = tonumber(entry.videoOffsetTimeMsec or entry.replayChatItemAction.videoOffsetTimeMsec)
-                    relative_live_time = time
-                end
+        while true do
+            local line = file:read("*l")
+            if not line then
+                break
             end
+            last_position = file:seek()
         end
 
-        if relative_live_time ~= nil then
-            last_position = current_pos
-        end
         file:close()
         return
     end
 
     file:seek("set", last_position)
     local new_messages = {}
-    for line in file:lines() do
-        local entry = utils.parse_json(line)
-        if entry and entry.replayChatItemAction then
-            local time = tonumber(entry.videoOffsetTimeMsec or entry.replayChatItemAction.videoOffsetTimeMsec)
-            for _, action in ipairs(entry.replayChatItemAction.actions) do
-                local message = parse_chat_action(action, entry.isLive and
-                    math.max(0, mp.get_property_native("duration") - 10) * 1000 + (time - relative_live_time) or time)
-                if message then
-                    table.insert(new_messages, message)
+    while true do
+        local line = file:read("*l")
+        last_position = file:seek()
+        if not line then
+            break
+        end
+
+        if line:match("%S") then
+            local entry = utils.parse_json(line)
+            if entry and entry.replayChatItemAction then
+                local time = tonumber(entry.videoOffsetTimeMsec or entry.replayChatItemAction.videoOffsetTimeMsec)
+                if not relative_live_time then
+                    relative_live_time = time
+                end
+                for _, action in ipairs(entry.replayChatItemAction.actions) do
+                    local message = parse_chat_action(action, entry.isLive and
+                        math.max(0, mp.get_property_native("duration") - 10) * 1000 + (time - relative_live_time) or
+                        time)
+                    if message then
+                        table.insert(new_messages, message)
+                    end
                 end
             end
         end
     end
 
-    last_position = file:seek()
     file:close()
     return new_messages
 end
