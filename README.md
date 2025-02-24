@@ -3,7 +3,7 @@ This fork supports downloading live chats as they download so it works for lives
 Takes about 10 seconds to start working.
 
 My live stream logic:
-When downloading the live chat from a live stream, the script seeks to the last empty line of the file. Then, it wait for that empty line to update, and it uses that first comment to time other new, downloaded comments. This is done for three reasons:
+When downloading the live chat from a live stream, the script seeks to the last empty line of the file. Then, it waits for that empty line to update, and it uses that first comment to time other new, downloaded comments. This is done for three reasons:
 
 1. Comments downloaded during livestreams have incorrect timing (videoOffsetTimeMsec) in relation to the stream duration.
 2. YTDLP seems to download comments in batches of about 5-10 seconds. To prevent displaying them all at once, we use their timings relative to each other.
