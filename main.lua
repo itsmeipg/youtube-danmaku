@@ -262,7 +262,6 @@ local function read_new_live_messages(filename)
     end
 
     if not last_position then
-        print("fail")
         local last_line = nil
         while true do
             local line = file:read("*l")
@@ -293,9 +292,8 @@ local function read_new_live_messages(filename)
                     relative_live_time = time
                 end
                 for _, action in ipairs(entry.replayChatItemAction.actions) do
-                    local message = parse_chat_action(action, entry.isLive and
-                        math.max(0, mp.get_property_native("duration") - 10) * 1000 + (time - relative_live_time) or
-                        time)
+                    local message = parse_chat_action(action,
+                        entry.isLive and mp.get_property_native("duration") * 1000 + (time - relative_live_time) or time)
                     if message then
                         table.insert(new_messages, message)
                     end
