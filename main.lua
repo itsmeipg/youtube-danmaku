@@ -23,7 +23,9 @@ local utils = require("mp.utils")
 
 local messages = {}
 local current_filename
+local download_finished = false
 local last_position
+local relative_live_time = 0
 local chat_overlay = mp.create_osd_overlay("ass-events")
 chat_overlay.z = -1
 
@@ -149,17 +151,14 @@ local function format_message(message)
     return result or ''
 end
 
-local function file_exists(path)
-    if not path then
-        return
-    end
-    local file_infou = utils.file_info(mp.command_native({"expand-path", path}))
-
-    if file_infou and file_infou.is_file then
+local function file_exists(name)
+    local f = io.open(name, "r")
+    if f ~= nil then
+        f:close()
         return true
+    else
+        return false
     end
-
-    return false
 end
 
 local function parse_message_runs(runs)
@@ -264,7 +263,25 @@ local function read_new_live_messages(filename)
 
     if last_position == nil then
         file:seek("end")
-        last_position = file:seek()
+        local current_pos = file:seek()
+        file:seek("set", math.max(0, current_pos - 1024))
+
+        local last_line = nil
+        for line in file:lines() do
+            last_line = line
+        end
+
+        if last_line then
+            local entry = utils.parse_json(last_line)
+            if entry and entry.isLive then
+                if entry.replayChatItemAction then
+                    local time = tonumber(entry.videoOffsetTimeMsec or entry.replayChatItemAction.videoOffsetTimeMsec)
+                    relative_live_time = time
+                end
+            end
+        end
+
+        last_position = current_pos
         file:close()
         return
     end
@@ -276,8 +293,8 @@ local function read_new_live_messages(filename)
         if entry.replayChatItemAction then
             local time = tonumber(entry.videoOffsetTimeMsec or entry.replayChatItemAction.videoOffsetTimeMsec)
             for _, action in ipairs(entry.replayChatItemAction.actions) do
-                local message = parse_chat_action(action, (entry.isLive and mp.get_property_native("duration") or
-                    mp.get_property_native("time-pos")) * 1000)
+                local message = parse_chat_action(action, entry.isLive and mp.get_property_native("duration") * 1000 +
+                    (time - relative_live_time) or time)
                 if message then
                     table.insert(new_messages, message)
                 end
@@ -294,7 +311,10 @@ end
 local function update_chat_overlay(time)
     if current_filename then
         if file_exists(current_filename) then
-            messages = generate_messages(current_filename)
+            if download_finished == false then
+                download_finished = true
+                messages = generate_messages(current_filename)
+            end
         elseif file_exists(current_filename .. ".part") then
             local new_messages = read_new_live_messages(current_filename .. ".part")
             if new_messages then
@@ -382,6 +402,8 @@ end
 mp.add_forced_key_binding("c", "load-chat", function()
     current_filename = nil
     last_position = nil
+    download_finished = false
+    relative_live_time = 0
     messages = {}
     chat_overlay.data = ''
     load_live_chat()
