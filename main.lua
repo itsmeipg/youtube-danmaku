@@ -25,7 +25,7 @@ local messages = {}
 local current_filename
 local download_finished = false
 local last_position
-local relative_live_time = 0
+local relative_live_time
 local chat_overlay = mp.create_osd_overlay("ass-events")
 chat_overlay.z = -1
 
@@ -255,6 +255,9 @@ local function generate_messages(live_chat_json)
     return result
 end
 
+local last_position = nil
+local relative_live_time = nil
+
 local function read_new_live_messages(filename)
     local file = io.open(filename, "r")
     if not file then
@@ -264,10 +267,12 @@ local function read_new_live_messages(filename)
     if last_position == nil then
         file:seek("end")
         local current_pos = file:seek()
+
         file:seek("set", math.max(0, current_pos - 1024))
+        local last_chunk = file:read("*a")
 
         local last_line = nil
-        for line in file:lines() do
+        for line in last_chunk:gmatch("[^\r\n]+") do
             last_line = line
         end
 
@@ -281,7 +286,9 @@ local function read_new_live_messages(filename)
             end
         end
 
-        last_position = current_pos
+        if relative_live_time ~= nil then
+            last_position = current_pos
+        end
         file:close()
         return
     end
@@ -290,11 +297,11 @@ local function read_new_live_messages(filename)
     local new_messages = {}
     for line in file:lines() do
         local entry = utils.parse_json(line)
-        if entry.replayChatItemAction then
+        if entry and entry.replayChatItemAction then
             local time = tonumber(entry.videoOffsetTimeMsec or entry.replayChatItemAction.videoOffsetTimeMsec)
             for _, action in ipairs(entry.replayChatItemAction.actions) do
-                local message = parse_chat_action(action, entry.isLive and mp.get_property_native("duration") * 1000 +
-                    (time - relative_live_time) or time)
+                local message = parse_chat_action(action, entry.isLive and
+                    math.max(0, mp.get_property_native("duration") - 10) * 1000 + (time - relative_live_time) or time)
                 if message then
                     table.insert(new_messages, message)
                 end
@@ -304,7 +311,6 @@ local function read_new_live_messages(filename)
 
     last_position = file:seek()
     file:close()
-
     return new_messages
 end
 
@@ -403,7 +409,7 @@ mp.add_forced_key_binding("c", "load-chat", function()
     current_filename = nil
     last_position = nil
     download_finished = false
-    relative_live_time = 0
+    relative_live_time = nil
     messages = {}
     chat_overlay.data = ''
     load_live_chat()
