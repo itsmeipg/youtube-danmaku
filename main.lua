@@ -255,9 +255,6 @@ local function generate_messages(live_chat_json)
     return result
 end
 
-local last_position = nil
-local relative_live_time = nil
-
 local function read_new_live_messages(filename)
     local file = io.open(filename, "r")
     if not file then
