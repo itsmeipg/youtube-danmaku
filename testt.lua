@@ -99,42 +99,19 @@ end
 
 local timer = mp.add_periodic_timer(INTERVAL, render, true)
 
-local function filter_state(label, name)
-    local filters = mp.get_property_native("vf")
-    for _, filter in pairs(filters) do
-        if filter.label == label or filter.name == name or filter.params[name] ~= nil then
-            return true
-        end
-    end
-    return false
-end
-
-function show_danmaku_func()
+local function show_danmaku_func()
     render()
     if not pause then
         timer:resume()
     end
-    if options.vf_fps then
-        local display_fps = mp.get_property_number('display-fps')
-        local video_fps = mp.get_property_number('estimated-vf-fps')
-        if (display_fps and display_fps < 58) or (video_fps and video_fps > 58) then
-            return
-        end
-        if not filter_state("danmaku", "fps") then
-            mp.commandv("vf", "append", string.format("@danmaku:fps=fps=%s", options.fps))
-        end
-    end
 end
 
-function hide_danmaku_func()
+local function hide_danmaku_func()
     timer:kill()
     overlay:remove()
-    if filter_state("danmaku") then
-        mp.commandv("vf", "remove", "@danmaku")
-    end
 end
 
-function generate_sample_danmaku()
+local function generate_sample_danmaku()
     local comments = {}
     local sample_texts = {"Hello world!", "Nice video!", "LOL", "This part is amazing!", "What is this?",
                           "Great content!", "I can't believe this", "Too funny 😂", "First time watching",
@@ -167,18 +144,12 @@ function generate_sample_danmaku()
 
         table.insert(comments, {
             text = formatted_text,
-            start_time = start_time,
+            start_time = start_time
         })
     end
 
     return comments
 end
-
-mp.add_forced_key_binding("Ctrl+d", "simulate-danmaku", function()
-    comments = generate_sample_danmaku()
-    enabled = true
-    show_danmaku_func()
-end)
 
 mp.observe_property('osd-width', 'number', function(_, value)
     osd_width = value or osd_width
@@ -187,20 +158,12 @@ mp.observe_property('osd-height', 'number', function(_, value)
     osd_height = value or osd_height
 end)
 mp.observe_property('display-fps', 'number', function(_, value)
-    if value ~= nil then
-        local interval = 1 / value / 10
-        if interval > INTERVAL then
-            timer:kill()
-            timer = mp.add_periodic_timer(interval, render, true)
-            if enabled then
-                timer:resume()
-            end
-        else
-            timer:kill()
-            timer = mp.add_periodic_timer(INTERVAL, render, true)
-            if enabled then
-                timer:resume()
-            end
+    if value then
+        local interval = 1 / value
+        timer:kill()
+        timer = mp.add_periodic_timer(interval, render, true)
+        if enabled then
+            timer:resume()
         end
     end
 end)
@@ -222,9 +185,6 @@ mp.add_hook("on_unload", 50, function()
     comments = nil
     timer:kill()
     overlay:remove()
-    if filter_state("danmaku") then
-        mp.commandv("vf", "remove", "@danmaku")
-    end
 end)
 
 mp.register_event('playback-restart', function(event)
@@ -236,17 +196,16 @@ mp.register_event('playback-restart', function(event)
     end
 end)
 
-mp.add_forced_key_binding("d", "toggle-danmaku", function()
-    if not enabled then
-        if not comments then
-            auto_load_danmaku()
-        else
-            enabled = true
-            show_danmaku_func()
-        end
-    else
-        enabled = false
-        hide_danmaku_func()
-    end
+mp.add_forced_key_binding("Ctrl+d", "simulate-danmaku", function()
+    comments = generate_sample_danmaku()
+    enabled = true
+    show_danmaku_func()
 end)
 
+mp.add_forced_key_binding("s", "hide", function()
+    hide_danmaku_func()
+end)
+
+mp.add_forced_key_binding("b", "show", function()
+    show_danmaku_func()
+end)
