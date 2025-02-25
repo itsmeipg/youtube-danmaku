@@ -3,20 +3,17 @@ local options = {
     fontsize = 25,
     bold = "true",
 
+    duration = 8,
     transparency = 0x0, -- 0-255 (0 = opaque, 255 = transparent)
     outline = 1,
     shadow = 0,
-    displayarea = 0.8, -- Percentage of screen height for display area
-
-    vf_fps = false, -- Whether to use fps filter
-    fps = 60 -- Target fps for filter
+    displayarea = 0.8 -- Percentage of screen height for display area
 }
 
 local msg = require('mp.msg')
 local utils = require("mp.utils")
 
-local duration = 8
-local INTERVAL = 0.016
+local timer
 local osd_width, osd_height, pause = 0, 0, true
 local enabled, comments = false, nil
 
@@ -39,7 +36,7 @@ local function parse_comment(event, pos, height)
         return string.format("{\\an8}%s", event.text)
     end
 
-    local progress = (pos - event.start_time) / duration
+    local progress = (pos - event.start_time) / options.duration
 
     local current_x = tonumber(x1 + (x2 - x1) * progress)
     local current_y = tonumber(y1 + (y2 - y1) * progress)
@@ -73,7 +70,7 @@ local function render()
     local ass_events = {}
 
     for _, event in ipairs(comments) do
-        if pos >= event.start_time and pos <= event.start_time + duration then
+        if pos >= event.start_time and pos <= event.start_time + options.duration then
             local text = parse_comment(event, pos, height)
 
             if text and text:match("\\fs%d+") then
@@ -95,20 +92,6 @@ local function render()
     overlay.res_y = height
     overlay.data = table.concat(ass_events, '\n')
     overlay:update()
-end
-
-local timer = mp.add_periodic_timer(INTERVAL, render, true)
-
-local function show_danmaku_func()
-    render()
-    if not pause then
-        timer:resume()
-    end
-end
-
-local function hide_danmaku_func()
-    timer:kill()
-    overlay:remove()
 end
 
 local function generate_sample_danmaku()
@@ -151,6 +134,18 @@ local function generate_sample_danmaku()
     return comments
 end
 
+local function show_danmaku_func()
+    render()
+    if not pause then
+        timer:resume()
+    end
+end
+
+local function hide_danmaku_func()
+    timer:kill()
+    overlay:remove()
+end
+
 mp.observe_property('osd-width', 'number', function(_, value)
     osd_width = value or osd_width
 end)
@@ -160,7 +155,9 @@ end)
 mp.observe_property('display-fps', 'number', function(_, value)
     if value then
         local interval = 1 / value
-        timer:kill()
+        if timer then
+            timer:kill()
+        end
         timer = mp.add_periodic_timer(interval, render, true)
         if enabled then
             timer:resume()
