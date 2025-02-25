@@ -1,6 +1,6 @@
 local options = {
     fontname = "sans-serif",
-    fontsize = 25,
+    fontsize = 30,
     bold = "true",
 
     duration = 8,
@@ -10,12 +10,12 @@ local options = {
     displayarea = 0.8 -- Percentage of screen height for display area
 }
 
-local msg = require('mp.msg')
 local utils = require("mp.utils")
 
+local overlay = mp.create_osd_overlay('ass-events')
 local timer
 local osd_width, osd_height, pause = 0, 0, true
-local enabled, comments = false, nil
+enabled, comments = true, {}
 
 local function parse_comment(event, pos, height)
     local function parse_move_tag(text)
@@ -28,6 +28,7 @@ local function parse_comment(event, pos, height)
 
     local x1, y1, x2, y2 = parse_move_tag(event.text)
     local displayarea = tonumber(height * options.displayarea)
+
     if not x1 then
         local current_x, current_y = event.text:match("\\pos%((%-?[%d%.]+),%s*(%-?[%d%.]+).*%)")
         if tonumber(current_y) > displayarea then
@@ -36,22 +37,20 @@ local function parse_comment(event, pos, height)
         return string.format("{\\an8}%s", event.text)
     end
 
-    local progress = (pos - event.start_time) / options.duration
+    local progress = (pos - event.time) / options.duration
 
     local current_x = tonumber(x1 + (x2 - x1) * progress)
     local current_y = tonumber(y1 + (y2 - y1) * progress)
-
-    local clean_text = event.text:gsub("\\move%(.-%)", "")
     if current_y > displayarea then
         return
     end
+
+    local clean_text = event.text:gsub("\\move%(.-%)", "")
     return string.format("{\\pos(%.1f,%.1f)\\an8}%s", current_x, current_y, clean_text)
 end
 
-local overlay = mp.create_osd_overlay('ass-events')
-
 local function render()
-    if comments == nil then
+    if #comments == 0 then
         return
     end
 
@@ -70,7 +69,7 @@ local function render()
     local ass_events = {}
 
     for _, event in ipairs(comments) do
-        if pos >= event.start_time and pos <= event.start_time + options.duration then
+        if pos >= event.time and pos <= event.time + options.duration then
             local text = parse_comment(event, pos, height)
 
             if text and text:match("\\fs%d+") then
@@ -94,6 +93,19 @@ local function render()
     overlay:update()
 end
 
+function add_comment(time, text, color)
+    local x1 = osd_width * 1.5
+    local y1 = math.random(math.floor(osd_height * options.displayarea))
+
+    -- End position
+    local x2 = -osd_width / 3
+    local y2 = y1 -- Keep same vertical position
+    table.insert(comments, {
+        text = string.format("{\\move(%.1f,%.1f,%.1f,%.1f)}{\\c%s}%s", x1, y1, x2, y2, color, text),
+        time = time
+    })
+end
+
 local function generate_sample_danmaku()
     local comments = {}
     local sample_texts = {"Hello world!", "Nice video!", "LOL", "This part is amazing!", "What is this?",
@@ -103,31 +115,27 @@ local function generate_sample_danmaku()
     local num_comments = 1000
 
     for i = 1, num_comments do
-        local start_time = math.random() * 600
+        local time = math.random() * 600
         local text = sample_texts[math.random(#sample_texts)]
 
         -- For some comments, add movement
         local formatted_text = text
-        -- Random starting position (mostly off-screen to the right)
-        local x1 = osd_width * 1.5
-        local y1 = math.random(math.floor(osd_height * options.displayarea * 0.8))
+        -- Starting position
+        local x1 = osd_width * 1.3
+        local y1 = math.random(math.floor(osd_height * options.displayarea))
 
-        -- End position (off-screen to the left)
-        local x2 = -100 - math.random(200)
-        local y2 = y1 -- Keep same vertical position for simple scrolling
+        -- End position
+        local x2 = -osd_width / 3
+        local y2 = y1 -- Keep same vertical position
 
         formatted_text = string.format("\\move(%.1f,%.1f,%.1f,%.1f)%s", x1, y1, x2, y2, text)
 
-        -- Random color for some comments
-        if math.random() < 0.3 then
-            local colors = {"&HFFFF00&", "&HFF00FF&", "&H00FFFF&", "&H00FF00&", "&HFF0000&", "&H0000FF&"}
-            local color = colors[math.random(#colors)]
-            formatted_text = string.format("{\\c%s}%s", color, formatted_text)
-        end
+        local color = "&HFFFFFF&"
+        formatted_text = string.format("{\\c%s}%s", color, formatted_text)
 
         table.insert(comments, {
             text = formatted_text,
-            start_time = start_time
+            time = time
         })
     end
 
@@ -171,7 +179,7 @@ mp.observe_property('pause', 'bool', function(_, value)
     if enabled then
         if pause then
             timer:kill()
-        elseif comments ~= nil then
+        elseif #comments > 0 then
             timer:resume()
         end
     end
@@ -179,16 +187,13 @@ end)
 
 mp.add_hook("on_unload", 50, function()
     mp.unobserve_property('pause')
-    comments = nil
+    comments = {}
     timer:kill()
     overlay:remove()
 end)
 
 mp.register_event('playback-restart', function(event)
-    if event.error then
-        return msg.error(event.error)
-    end
-    if enabled and comments ~= nil then
+    if enabled and #comments > 0 then
         render()
     end
 end)
