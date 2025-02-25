@@ -192,39 +192,30 @@ function generate_sample_danmaku(duration, density)
                           "Love this scene"}
 
     -- Determine number of comments based on density and duration
-    local num_comments = math.floor(duration * density)
+    local num_comments = 1000
 
     for i = 1, num_comments do
         -- Random start time between 0 and duration
-        local start_time = math.random() * duration
-
-        -- Random duration between a reasonable time range (2-10 seconds)
-        local comment_duration = math.random(2, 10)
-        local end_time = math.min(start_time + comment_duration, duration)
+        local start_time = math.random() * 600
+        local end_time = start_time + 8
 
         -- Random style
-        local style = styles[math.random(#styles)]
+        local style = "Regular"
 
         -- Random text
         local text = sample_texts[math.random(#sample_texts)]
 
         -- For some comments, add movement
         local formatted_text = text
-        if math.random() < 0.7 then -- 70% of comments will move across the screen
-            -- Random starting position (mostly off-screen to the right)
-            local x1 = osd_width + math.random(100)
-            local y1 = math.random(math.floor(osd_height * options.displayarea * 0.8))
+        -- Random starting position (mostly off-screen to the right)
+        local x1 = osd_width * 1.5
+        local y1 = math.random(math.floor(osd_height * options.displayarea * 0.8))
 
-            -- End position (off-screen to the left)
-            local x2 = -100 - math.random(200)
-            local y2 = y1 -- Keep same vertical position for simple scrolling
+        -- End position (off-screen to the left)
+        local x2 = -100 - math.random(200)
+        local y2 = y1 -- Keep same vertical position for simple scrolling
 
-            formatted_text = string.format("\\move(%.1f,%.1f,%.1f,%.1f)%s", x1, y1, x2, y2, text)
-        else -- 30% will have fixed positions
-            local x = math.random(osd_width * 0.8)
-            local y = math.random(math.floor(osd_height * options.displayarea * 0.8))
-            formatted_text = string.format("\\pos(%.1f,%.1f)%s", x, y, text)
-        end
+        formatted_text = string.format("\\move(%.1f,%.1f,%.1f,%.1f)%s", x1, y1, x2, y2, text)
 
         -- Random color for some comments
         if math.random() < 0.3 then
@@ -233,13 +224,6 @@ function generate_sample_danmaku(duration, density)
             formatted_text = string.format("{\\c%s}%s", color, formatted_text)
         end
 
-        -- Random size for some comments
-        if math.random() < 0.2 then
-            local size_mult = math.random(10, 20)
-            formatted_text = string.format("{\\fs%d}%s", options.fontsize * size_mult / 10, formatted_text)
-        end
-
-        -- Add to comments table
         table.insert(comments, {
             text = formatted_text,
             start_time = start_time,
