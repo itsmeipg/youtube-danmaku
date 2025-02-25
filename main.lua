@@ -11,7 +11,7 @@ local options = {
     font = mp.get_property_native('osd-font'),
     font_size = 16,
     border_size = 2,
-    message_duration = 10000,
+    message_duration = 20000,
     max_message_line_length = 40,
     message_break_anywhere = false,
     message_gap = 10,
@@ -289,8 +289,7 @@ local function read_new_live_messages(filename)
         if line:match("%S") then
             local entry = utils.parse_json(line)
             if entry and entry.replayChatItemAction then
-                latest_line_time = tonumber(entry.videoOffsetTimeMsec or
-                                                      entry.replayChatItemAction.videoOffsetTimeMsec)
+                latest_line_time = tonumber(entry.videoOffsetTimeMsec or entry.replayChatItemAction.videoOffsetTimeMsec)
                 table.insert(lines, entry)
             end
         end
@@ -301,7 +300,7 @@ local function read_new_live_messages(filename)
         if latest_line_time then
             live_offset = latest_line_time - mp.get_property_native("duration") * 1000
         end
-    
+
         for _, entry in ipairs(lines) do
             local time = tonumber(entry.videoOffsetTimeMsec or entry.replayChatItemAction.videoOffsetTimeMsec)
             for _, action in ipairs(entry.replayChatItemAction.actions) do
@@ -312,7 +311,6 @@ local function read_new_live_messages(filename)
             end
         end
     end
-    
 
     return new_messages
 end
