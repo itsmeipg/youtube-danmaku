@@ -18,6 +18,7 @@ local options = {
     anchor = 1
 }
 
+require("danmaku_renderer")
 require("mp.options").read_options(options)
 local utils = require("mp.utils")
 
@@ -26,36 +27,19 @@ local current_filename
 local download_finished = false
 local last_position = nil
 local live_offset = nil
-local chat_overlay = mp.create_osd_overlay("ass-events")
-chat_overlay.z = -1
-
-local function string_to_color(str)
-    local hash = 5381
-    for i = 1, str:len() do
-        hash = (33 * hash + str:byte(i)) % 16777216
-    end
-    return hash
-end
-
-local function swap_color_string(str)
-    local r = str:sub(1, 2)
-    local g = str:sub(3, 4)
-    local b = str:sub(5, 6)
-    return b .. g .. r
-end
-
-local function split_string(input)
-    local splits = {}
-
-    local delimiter_pattern = " %.,%-!%?"
-    for input in string.gmatch(input, "[^" .. delimiter_pattern .. "]+[" .. delimiter_pattern .. "]*") do
-        table.insert(splits, input)
-    end
-
-    return splits
-end
 
 local function break_message(message, initial_length)
+    local function split_string(input)
+        local splits = {}
+
+        local delimiter_pattern = " %.,%-!%?"
+        for input in string.gmatch(input, "[^" .. delimiter_pattern .. "]+[" .. delimiter_pattern .. "]*") do
+            table.insert(splits, input)
+        end
+
+        return splits
+    end
+
     local max_line_length = options.max_message_line_length
     if max_line_length <= 0 then
         return message
@@ -91,23 +75,9 @@ end
 local function chat_message_to_string(message)
     if message.type == 0 then
         if options.show_author then
-            if options.author_color == 'random' then
-                return string.format('{\\1c&H%06x&}{\\3c&H%s&}%s{\\1c&H%s&}{\\3c&H%s&}: %s', message.author_color,
-                    swap_color_string(options.author_border_color), message.author,
-                    swap_color_string(options.message_color), swap_color_string(options.message_border_color),
-                    break_message(message.contents, message.author:len() + 2))
-            elseif options.author_color == 'none' then
-                return string.format('{\\3c&H%s&}%s{\\1c&H%s&}{\\3c&H%s&}: %s',
-                    swap_color_string(options.author_border_color), message.author,
-                    swap_color_string(options.message_color), swap_color_string(options.message_border_color),
-                    break_message(message.contents, message.author:len() + 2))
-            else
-                return string.format('{\\1c&H%s&}{\\3c&H%s&}%s{\\1c&H%s&}{\\3c&H%s&}: %s',
-                    swap_color_string(options.author_color), swap_color_string(options.author_border_color),
-                    message.author, swap_color_string(options.message_color),
-                    swap_color_string(options.message_border_color),
-                    break_message(message.contents, message.author:len() + 2))
-            end
+            return string.format('{\\1c&H%s&}{\\3c&H%s&}%s{\\1c&H%s&}{\\3c&H%s&}: %s', options.author_color,
+                options.author_border_color, message.author, options.message_color, options.message_border_color,
+                break_message(message.contents, message.author:len() + 2))
         else
             return break_message(message.contents, 0)
         end
@@ -119,36 +89,6 @@ local function chat_message_to_string(message)
             return string.format('%s %s', message.author, message.money)
         end
     end
-end
-
-local function format_message(message)
-    local message_string = chat_message_to_string(message)
-    local result = nil
-    local lines = message_string:gmatch("([^\n]*)\n?")
-
-    for line in lines do
-        local formatting = '{\\an' .. options.anchor .. '}' .. '{\\fs' .. options.font_size .. '}' .. '{\\fn' ..
-                               options.font .. '}' .. '{\\bord' .. options.border_size .. '}' ..
-                               string.format('{\\1c&H%s&}', swap_color_string(options.message_color)) ..
-                               string.format('{\\3c&H%s&}', swap_color_string(options.message_border_color))
-        if message.type == 1 then
-            formatting = formatting ..
-                             string.format('{\\1c&H%s&}{\\3c&%s&}',
-                    swap_color_string(string.format('%06x', message.text_color)),
-                    swap_color_string(string.format('%06x', message.border_color)))
-        end
-        local message_string = formatting .. line
-        if result == nil then
-            result = message_string
-        else
-            if options.anchor <= 3 then
-                result = message_string .. '\n' .. result
-            else
-                result = result .. '\n' .. message_string
-            end
-        end
-    end
-    return result or ''
 end
 
 local function file_exists(name)
@@ -178,6 +118,14 @@ local function parse_message_runs(runs)
 end
 
 local function parse_text_message(renderer)
+    local function string_to_color(str)
+        local hash = 5381
+        for i = 1, str:len() do
+            hash = (33 * hash + str:byte(i)) % 16777216
+        end
+        return hash
+    end
+
     local id = renderer.authorExternalChannelId
     local color = string_to_color(id)
 
@@ -255,7 +203,7 @@ local function generate_messages(live_chat_json)
     return result
 end
 
-local function read_new_live_messages(filename)
+local function read_new_messages(filename)
     local file = io.open(filename, "r")
     if not file then
         return nil
@@ -320,44 +268,17 @@ local function update_chat_overlay(time)
         if file_exists(current_filename) then
             if download_finished == false then
                 download_finished = true
-                messages = generate_messages(current_filename)
+                comments = generate_messages(current_filename)
             end
         elseif file_exists(current_filename .. ".part") then
-            local new_messages = read_new_live_messages(current_filename .. ".part")
+            local new_messages = read_new_messages(current_filename .. ".part")
             if new_messages then
-                for _, msg in ipairs(new_messages) do
-                    table.insert(messages, msg)
+                for _, message in ipairs(new_messages) do
+                    add_comment(message.time / 1000, message.contents, "&HFFFFFF&")
                 end
             end
         end
     end
-
-    if options.chat_hidden or chat_overlay == nil or messages == nil or time == nil then
-        return
-    end
-
-    local msec = time * 1000
-
-    chat_overlay.data = ''
-    for i = 1, #messages do
-        local message = messages[i]
-        if message.time > msec then
-            break
-        elseif msec <= message.time + options.message_duration then
-            local message_string = format_message(message)
-
-            if options.anchor <= 3 then
-                chat_overlay.data = message_string .. '\n' .. '{\\fscy' .. options.message_gap ..
-                                        '}{\\fscx0}\\h{\fscy\fscx}' .. chat_overlay.data
-
-            else
-                chat_overlay.data =
-                    chat_overlay.data .. '{\\fscy' .. options.message_gap .. '}{\\fscx0}\\h{\fscy\fscx}' .. '\n' ..
-                        message_string
-            end
-        end
-    end
-    chat_overlay:update()
 end
 
 local function download_live_chat(url, filename)
@@ -403,7 +324,6 @@ local function load_live_chat(filename)
         end
     end
     current_filename = filename
-    update_chat_overlay(mp.get_property_native("time-pos"))
 end
 
 mp.add_forced_key_binding("c", "load-chat", function()
@@ -412,11 +332,9 @@ mp.add_forced_key_binding("c", "load-chat", function()
     download_finished = false
     live_offset = nil
     messages = {}
-    chat_overlay.data = ''
     load_live_chat()
 end)
 
-local function _update_chat_overlay(_, time)
+mp.observe_property("time-pos", "native", function(_, time)
     update_chat_overlay(time)
-end
-mp.observe_property("time-pos", "native", _update_chat_overlay)
+end)
