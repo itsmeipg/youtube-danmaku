@@ -25,7 +25,7 @@ local messages = {}
 local current_filename
 local download_finished = false
 local last_position = nil
-local relative_live_time = nil
+local live_offset = nil
 local chat_overlay = mp.create_osd_overlay("ass-events")
 chat_overlay.z = -1
 
@@ -275,8 +275,10 @@ local function read_new_live_messages(filename)
         return
     end
 
+    local lines = {}
     file:seek("set", last_position)
     local new_messages = {}
+    local latest_line_time
     while true do
         local line = file:read("*l")
         last_position = file:seek()
@@ -287,22 +289,31 @@ local function read_new_live_messages(filename)
         if line:match("%S") then
             local entry = utils.parse_json(line)
             if entry and entry.replayChatItemAction then
-                local time = tonumber(entry.videoOffsetTimeMsec or entry.replayChatItemAction.videoOffsetTimeMsec)
-                if not relative_live_time then
-                    relative_live_time = time
-                end
-                for _, action in ipairs(entry.replayChatItemAction.actions) do
-                    local message = parse_chat_action(action,
-                        entry.isLive and mp.get_property_native("duration") * 1000 + (time - relative_live_time) or time)
-                    if message then
-                        table.insert(new_messages, message)
-                    end
+                latest_line_time = tonumber(entry.videoOffsetTimeMsec or
+                                                      entry.replayChatItemAction.videoOffsetTimeMsec)
+                table.insert(lines, entry)
+            end
+        end
+    end
+    file:close()
+
+    if #lines > 0 then
+        if latest_line_time then
+            live_offset = latest_line_time - mp.get_property_native("duration") * 1000
+        end
+    
+        for _, entry in ipairs(lines) do
+            local time = tonumber(entry.videoOffsetTimeMsec or entry.replayChatItemAction.videoOffsetTimeMsec)
+            for _, action in ipairs(entry.replayChatItemAction.actions) do
+                local message = parse_chat_action(action, entry.isLive and (time - live_offset) or time)
+                if message then
+                    table.insert(new_messages, message)
                 end
             end
         end
     end
+    
 
-    file:close()
     return new_messages
 end
 
@@ -401,7 +412,7 @@ mp.add_forced_key_binding("c", "load-chat", function()
     current_filename = nil
     last_position = nil
     download_finished = false
-    relative_live_time = nil
+    live_offset = nil
     messages = {}
     chat_overlay.data = ''
     load_live_chat()
