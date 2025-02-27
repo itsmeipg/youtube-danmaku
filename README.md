@@ -19,3 +19,7 @@ Script gets newest messages since live_chat file downloaded. Comment times are n
 - Fix options
 - Implement message break/wrap
 - Find a way for YT-DLP to update live_chat.json.part faster and with less delay.
+
+# Sources
+- https://github.com/m13253/danmaku2ass/blob/ced881747670c2eb1c0dbd292c2a567f444b056a/danmaku2ass.py#L747
+- https://github.com/Tony15246/uosc_danmaku/blob/main/render.lua
