@@ -23,3 +23,4 @@ Script gets newest messages since live_chat file downloaded. Comment times are n
 # Sources
 - https://github.com/m13253/danmaku2ass/blob/ced881747670c2eb1c0dbd292c2a567f444b056a/danmaku2ass.py#L747
 - https://github.com/Tony15246/uosc_danmaku/blob/main/render.lua
+- https://github.com/ShazibRahman/mpv-youtube-live-chat-relay/blob/bd6b0f40a1b4ac71ce635bca5e0cd179e98f0034/main.lua#L104
