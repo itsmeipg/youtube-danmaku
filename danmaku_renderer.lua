@@ -3,7 +3,7 @@ local options = {
 
     fontname = "sans-serif",
     fontsize = 30,
-    bold = "true",
+    bold = true,
 
     duration = 8, -- May be innacurate (about third/half of a second) and more so for longer messages
     transparency = 0, -- 0-255 (0 = opaque, 255 = transparent)
@@ -25,10 +25,46 @@ local function render()
         overlay:remove()
         return
     end
-
+    
     local pos = mp.get_property_number('time-pos')
     local ass_events = {}
-    for _, comment in ipairs(comments) do
+    
+    -- Find the first comment that STARTS BEFORE OR AT current time + duration
+    -- (all comments that might be visible)
+    local first_idx = 1
+    local last_idx = #comments
+    
+    if pos > comments[1].time + options.duration then
+        -- Binary search to find first comment that might still be visible
+        local left, right = 1, #comments
+        while left <= right do
+            local mid = math.floor((left + right) / 2)
+            if comments[mid].time <= pos - options.duration then
+                first_idx = mid + 1
+                left = mid + 1
+            else
+                right = mid - 1
+            end
+        end
+    end
+    
+    if pos < comments[#comments].time then
+        -- Binary search to find last comment that might be visible
+        local left, right = first_idx, #comments
+        while left <= right do
+            local mid = math.floor((left + right) / 2)
+            if comments[mid].time <= pos then
+                left = mid + 1
+            else
+                last_idx = mid - 1
+                right = mid - 1
+            end
+        end
+    end
+    
+    -- Process only comments in the range that could be visible
+    for i = first_idx, last_idx do
+        local comment = comments[i]
         if pos >= comment.time and pos <= comment.time + options.duration then
             -- Starting position
             local x1 = width
@@ -36,26 +72,23 @@ local function render()
             -- End position
             local x2 = 0 - comment.text:len() * options.fontsize
             local y2 = y1
-
+            
             local progress = (pos - comment.time) / options.duration
             local current_x = tonumber(x1 + (x2 - x1) * progress)
             local current_y = tonumber(y1 + (y2 - y1) * progress)
-
+            
             if current_y <= tonumber(height * options.displayarea) then
                 local clean_text = comment.text:gsub("\\move%(.-%)", "")
-
                 local ass_text = comment.text and
-                                     string.format(
+                                    string.format(
                         "{\\rDefault\\an7\\q2\\pos(%.1f,%.1f)\\fn%s\\fs%d\\c&HFFFFFF&\\alpha&H%x\\bord%s\\shad%s\\b%s}%s",
                         current_x, current_y, options.fontname, options.fontsize, options.transparency, options.outline,
-                        options.shadow, options.bold == "true" and "1" or "0", comment.text)
-
+                        options.shadow, options.bold and 1 or 0, comment.text)
                 table.insert(ass_events, ass_text)
             end
-
         end
     end
-
+    
     overlay.res_x = width
     overlay.res_y = height
     overlay.data = table.concat(ass_events, '\n')
