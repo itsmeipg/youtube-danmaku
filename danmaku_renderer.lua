@@ -5,7 +5,7 @@ local options = {
     fontsize = 30,
     bold = true,
 
-    duration = 8, -- May be innacurate (about third/half of a second) and more so for longer messages
+    duration = 10, -- May be innacurate (about third/half of a second) and more so for longer messages
     transparency = 0, -- 0-255 (0 = opaque, 255 = transparent)
     outline = 1,
     shadow = 0,
@@ -78,7 +78,6 @@ local function render()
             local current_y = tonumber(y1 + (y2 - y1) * progress)
             
             if current_y <= tonumber(height * options.displayarea) then
-                local clean_text = comment.text:gsub("\\move%(.-%)", "")
                 local ass_text = comment.text and
                                     string.format(
                         "{\\rDefault\\an7\\q2\\pos(%.1f,%.1f)\\fn%s\\fs%d\\c&HFFFFFF&\\alpha&H%x\\bord%s\\shad%s\\b%s}%s",
