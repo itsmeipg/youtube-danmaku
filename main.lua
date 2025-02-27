@@ -1,7 +1,5 @@
 local options = {
     live_chat_directory = mp.command_native({"expand-path", "~~/live_chat"}),
-    chat_hidden = false,
-    auto_load = false,
     yt_dlp_path = 'yt-dlp',
     show_author = true,
     author_color = 'random',
@@ -10,12 +8,7 @@ local options = {
     message_border_color = '000000',
     font = mp.get_property_native('osd-font'),
     font_size = 16,
-    border_size = 2,
-    message_duration = 20000,
-    max_message_line_length = 40,
-    message_break_anywhere = false,
-    message_gap = 10,
-    anchor = 1
+    border_size = 2
 }
 
 require("danmaku_renderer")
@@ -28,71 +21,8 @@ local download_finished = false
 local last_position = nil
 local live_offset = nil
 
-local function break_message(message, initial_length)
-    local function split_string(input)
-        local splits = {}
-
-        local delimiter_pattern = " %.,%-!%?"
-        for input in string.gmatch(input, "[^" .. delimiter_pattern .. "]+[" .. delimiter_pattern .. "]*") do
-            table.insert(splits, input)
-        end
-
-        return splits
-    end
-
-    local max_line_length = options.max_message_line_length
-    if max_line_length <= 0 then
-        return message
-    end
-
-    local current_length = initial_length
-    local result = ''
-
-    if options.message_break_anywhere then
-        local lines = {}
-        while #message > 0 do
-            local newline = message:sub(1, max_line_length)
-            table.insert(lines, newline)
-            message = message:sub(max_line_length, #message)
-        end
-        result = table.concat(lines, '\n')
-    else
-        for _, v in ipairs(split_string(message)) do
-            current_length = current_length + #v
-
-            if current_length > max_line_length then
-                result = result .. '\n' .. v
-                current_length = #v
-            else
-                result = result .. v
-            end
-        end
-    end
-
-    return result
-end
-
-local function chat_message_to_string(message)
-    if message.type == 0 then
-        if options.show_author then
-            return string.format('{\\1c&H%s&}{\\3c&H%s&}%s{\\1c&H%s&}{\\3c&H%s&}: %s', options.author_color,
-                options.author_border_color, message.author, options.message_color, options.message_border_color,
-                break_message(message.contents, message.author:len() + 2))
-        else
-            return break_message(message.contents, 0)
-        end
-    elseif message.type == 1 then
-        if message.contents then
-            return string.format('%s %s: %s', message.author, message.money,
-                break_message(message.contents, message.author:len() + message.money:len()))
-        else
-            return string.format('%s %s', message.author, message.money)
-        end
-    end
-end
-
-local function file_exists(name)
-    local f = io.open(name, "r")
+local function file_exists(path)
+    local f = io.open(path, "r")
     if f ~= nil then
         f:close()
         return true
@@ -203,64 +133,48 @@ local function generate_messages(live_chat_json)
     return result
 end
 
-local function read_new_messages(filename)
+local function read_new_comments(filename)
     local file = io.open(filename, "r")
     if not file then
-        return nil
-    end
-
-    if not last_position then
-        local last_line = nil
-        while true do
-            local line = file:read("*l")
-            if not line then
-                break
-            end
-            last_position = file:seek()
-        end
-
-        file:close()
         return
     end
 
-    local lines = {}
-    file:seek("set", last_position)
-    local new_messages = {}
-    local latest_line_time
-    while true do
-        local line = file:read("*l")
-        last_position = file:seek()
-        if not line then
-            break
+    if not last_position then
+        for line in file:lines() do
+            last_position = file:seek()
         end
+    else
+        file:seek("set", last_position)
+    end
 
-        if line:match("%S") then
-            local entry = utils.parse_json(line)
-            if entry and entry.replayChatItemAction then
-                latest_line_time = tonumber(entry.videoOffsetTimeMsec or entry.replayChatItemAction.videoOffsetTimeMsec)
-                table.insert(lines, entry)
-            end
+    local new_comments = {}
+
+    local lines = {}
+    local latest_line_time
+    for line in file:lines() do
+        last_position = file:seek()
+        local entry = utils.parse_json(line)
+        if entry and entry.replayChatItemAction then
+            latest_line_time = tonumber(entry.videoOffsetTimeMsec or entry.replayChatItemAction.videoOffsetTimeMsec)
+            table.insert(lines, entry)
         end
     end
     file:close()
 
     if #lines > 0 then
-        if latest_line_time then
-            live_offset = latest_line_time - mp.get_property_native("duration") * 1000
-        end
-
+        live_offset = latest_line_time - mp.get_property_native("duration") * 1000
         for _, entry in ipairs(lines) do
             local time = tonumber(entry.videoOffsetTimeMsec or entry.replayChatItemAction.videoOffsetTimeMsec)
             for _, action in ipairs(entry.replayChatItemAction.actions) do
-                local message = parse_chat_action(action, entry.isLive and (time - live_offset) or time)
-                if message then
-                    table.insert(new_messages, message)
+                local comment = parse_chat_action(action, entry.isLive and (time - live_offset) or time)
+                if comment then
+                    table.insert(new_comments, comment)
                 end
             end
         end
     end
 
-    return new_messages
+    return new_comments
 end
 
 local function update_chat_overlay(time)
@@ -268,10 +182,15 @@ local function update_chat_overlay(time)
         if file_exists(current_filename) then
             if download_finished == false then
                 download_finished = true
-                comments = generate_messages(current_filename)
+                local awa = generate_messages(current_filename)
+                comments = {}
+                for i, message in ipairs(awa) do
+                    print(tostring(i))
+                    add_comment(message.time / 1000, message.contents, "&HFFFFFF&")
+                end
             end
         elseif file_exists(current_filename .. ".part") then
-            local new_messages = read_new_messages(current_filename .. ".part")
+            local new_messages = read_new_comments(current_filename .. ".part")
             if new_messages then
                 for _, message in ipairs(new_messages) do
                     add_comment(message.time / 1000, message.contents, "&HFFFFFF&")
