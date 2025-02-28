@@ -355,6 +355,8 @@ mp.observe_property('display-fps', 'number', function(_, value)
     end
 end)
 
+mp.add_key_binding(nil, "load-live-chat", load_live_chat)
+
 mp.add_key_binding(nil, "toggle-danmaku", function()
     options.danmaku_visibility = not options.danmaku_visibility
 end)
