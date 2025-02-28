@@ -1,5 +1,5 @@
 local options = {
-    live_chat_directory = mp.command_native({"expand-path", "~~/live_chat"}),
+    live_chat_directory = "~~/live_chat",
     yt_dlp_path = 'yt-dlp',
     autoload = true,
     danmaku_visibility = true,
@@ -7,7 +7,6 @@ local options = {
     fontname = "sans-serif",
     fontsize = 30,
     bold = true,
-    message_color = 'ffffff',
     transparency = 0, -- 0-255 (0 = opaque, 255 = transparent)
     outline = 1,
     shadow = 0,
@@ -15,12 +14,21 @@ local options = {
     displayarea = 0.7 -- Percentage of screen height for display area
 }
 
-require("mp.options").read_options(options)
-local utils = require("mp.utils")
+local function format_options(unformatted_options)
+    if unformatted_options["live_chat_directory"] then
+        options.live_chat_directory = mp.command_native({"expand-path", options.live_chat_directory})
+    end
+end
 
+format_options({
+    live_chat_directory = true
+})
+
+require("mp.options").read_options(options, nil, format_options)
+local utils = require("mp.utils")
 local filename
 local update_messages_timer
-local last_position = nil
+local last_position
 local download_finished = false
 local messages = {}
 local overlay = mp.create_osd_overlay('ass-events')
@@ -139,9 +147,7 @@ local function parse_text_message(renderer)
 
     local id = renderer.authorExternalChannelId
     local color = string_to_color(id)
-
     local author = renderer.authorName and renderer.authorName.simpleText or '-'
-
     local message = parse_message_runs(renderer.message.runs)
 
     return {
@@ -157,10 +163,8 @@ local function parse_superchat_message(renderer)
     local border_color = renderer.bodyBackgroundColor - 0xff000000
     local text_color = renderer.bodyTextColor - 0xff000000
     local money = renderer.purchaseAmountText.simpleText
-
     local author = renderer.authorName and renderer.authorName.simpleText or '-'
-
-    local message = nil
+    local message
     if renderer.message then
         message = parse_message_runs(renderer.message.runs)
     end
@@ -178,12 +182,11 @@ end
 
 local function parse_chat_action(action, time)
     if not action.addChatItemAction then
-        return nil
+        return
     end
 
+    local message
     local item = action.addChatItemAction.item
-    local message = nil
-
     if item.liveChatTextMessageRenderer then
         message = parse_text_message(item.liveChatTextMessageRenderer)
     elseif item.liveChatPaidMessageRenderer then
@@ -193,7 +196,6 @@ local function parse_chat_action(action, time)
     if message then
         message.time = time
     end
-
     return message
 end
 
