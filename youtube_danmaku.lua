@@ -309,7 +309,7 @@ local function update_messages()
             table.insert(messages, {
                 text = parsed_message.contents,
                 time = parsed_message.time / 1000,
-                y = math.random(math.floor(osd_height * options.displayarea))
+                y = math.random(math.floor(height * options.displayarea))
             })
         end
     end
@@ -317,9 +317,9 @@ local function update_messages()
     if filename then
         if file_exists(filename) and not download_finished then
             download_finished = true
-            messages = {}
             local parsed_messages = get_parsed_messages(filename)
             if parsed_messages then
+                messages = {}
                 add_messages(parsed_messages)
             end
         elseif file_exists(filename .. ".part") then
