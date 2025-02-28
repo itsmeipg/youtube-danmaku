@@ -259,6 +259,35 @@ local function get_new_parsed_messages(filename)
     return parsed_messages
 end
 
+local function update_messages()
+    local function add_messages(parsed_messages)
+        for _, parsed_message in ipairs(parsed_messages) do
+            table.insert(messages, {
+                text = parsed_message.contents,
+                time = parsed_message.time / 1000,
+                y = math.random(math.floor(height * options.displayarea))
+            })
+        end
+    end
+
+    if filename then
+        if file_exists(filename) and not download_finished then
+            download_finished = true
+            local parsed_messages = get_parsed_messages(filename)
+            if parsed_messages then
+                messages = {}
+                add_messages(parsed_messages)
+            end
+        elseif file_exists(filename .. ".part") then
+            local parsed_messages = get_new_parsed_messages(filename .. ".part")
+            if parsed_messages then
+                add_messages(parsed_messages)
+            end
+        end
+    end
+end
+update_messages_timer = mp.add_periodic_timer(.1, update_messages)
+
 local function reset()
     filename = nil
     last_position = nil
@@ -302,35 +331,6 @@ local function load_live_chat()
         filename = base_path .. '.live_chat.json'
     end
 end
-
-local function update_messages()
-    local function add_messages(parsed_messages)
-        for _, parsed_message in ipairs(parsed_messages) do
-            table.insert(messages, {
-                text = parsed_message.contents,
-                time = parsed_message.time / 1000,
-                y = math.random(math.floor(height * options.displayarea))
-            })
-        end
-    end
-
-    if filename then
-        if file_exists(filename) and not download_finished then
-            download_finished = true
-            local parsed_messages = get_parsed_messages(filename)
-            if parsed_messages then
-                messages = {}
-                add_messages(parsed_messages)
-            end
-        elseif file_exists(filename .. ".part") then
-            local parsed_messages = get_new_parsed_messages(filename .. ".part")
-            if parsed_messages then
-                add_messages(parsed_messages)
-            end
-        end
-    end
-end
-update_messages_timer = mp.add_periodic_timer(.1, update_messages)
 
 mp.register_event("file-loaded", function()
     if options.autoload then
