@@ -1,5 +1,5 @@
-# mpv-youtube-chat
-This fork supports downloading live chats as they download so it works for livestreams (that are live).
+# YouTube Danmaku
+This fork renders YouTube danmaku and supports parsing livechat as it downloads so it works for livestreams (that are live).
 Takes about 10 seconds to start working.
 
 # Live stream implementation logic
