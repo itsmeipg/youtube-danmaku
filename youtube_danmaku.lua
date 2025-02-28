@@ -81,7 +81,7 @@ local function render()
     -- Process only messages in the range that could be visible
     for i = first_idx, last_idx do
         local comment = messages[i]
-        if pos >= comment.time and pos <= comment.time + options.duration then
+        if comment.text and pos >= comment.time and pos <= comment.time + options.duration then
             -- Starting position
             local x1 = width
             local y1 = comment.y
