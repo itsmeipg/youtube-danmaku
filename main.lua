@@ -15,14 +15,92 @@ local options = {
     displayarea = 0.7 -- Percentage of screen height for display area
 }
 
-require("danmaku_renderer")
 require("mp.options").read_options(options)
 local utils = require("mp.utils")
 
 local filename
+local update_messages_timer
 local last_position = nil
 local download_finished = false
 local messages = {}
+local overlay = mp.create_osd_overlay('ass-events')
+local width, height = 1920, 1080
+local osd_width, osd_height = 0, 0
+local render_timer
+
+local function render()
+    if not options.danmaku_visibility or #messages == 0 then
+        overlay:remove()
+        return
+    end
+
+    local pos = mp.get_property_number('time-pos')
+    local ass_events = {}
+
+    -- Find the first comment that STARTS BEFORE OR AT current time + duration
+    -- (all messages that might be visible)
+    local first_idx = 1
+    local last_idx = #messages
+
+    if pos > messages[1].time + options.duration then
+        -- Binary search to find first comment that might still be visible
+        local left, right = 1, #messages
+        while left <= right do
+            local mid = math.floor((left + right) / 2)
+            if messages[mid].time <= pos - options.duration then
+                first_idx = mid + 1
+                left = mid + 1
+            else
+                right = mid - 1
+            end
+        end
+    end
+
+    if pos < messages[#messages].time then
+        -- Binary search to find last comment that might be visible
+        local left, right = first_idx, #messages
+        while left <= right do
+            local mid = math.floor((left + right) / 2)
+            if messages[mid].time <= pos then
+                left = mid + 1
+            else
+                last_idx = mid - 1
+                right = mid - 1
+            end
+        end
+    end
+
+    -- Process only messages in the range that could be visible
+    for i = first_idx, last_idx do
+        local comment = messages[i]
+        if pos >= comment.time and pos <= comment.time + options.duration then
+            -- Starting position
+            local x1 = width
+            local y1 = comment.y
+            -- End position
+            local x2 = 0 - comment.text:len() * options.fontsize
+            local y2 = y1
+
+            local progress = (pos - comment.time) / options.duration
+            local current_x = tonumber(x1 + (x2 - x1) * progress)
+            local current_y = tonumber(y1 + (y2 - y1) * progress)
+
+            if current_y <= tonumber(height * options.displayarea) then
+                local ass_text = comment.text and
+                                     string.format(
+                        "{\\rDefault\\an7\\q2\\pos(%.1f,%.1f)\\fn%s\\fs%d\\c&HFFFFFF&\\alpha&H%x\\bord%s\\shad%s\\b%s}%s",
+                        current_x, current_y, options.fontname, options.fontsize, options.transparency, options.outline,
+                        options.shadow, options.bold and 1 or 0, comment.text)
+                table.insert(ass_events, ass_text)
+            end
+        end
+    end
+
+    overlay.res_x = width
+    overlay.res_y = height
+    overlay.data = table.concat(ass_events, '\n')
+    overlay:update()
+end
 
 local function file_exists(path)
     local file = io.open(path, "r")
@@ -162,41 +240,21 @@ local function get_new_parsed_messages(filename)
     end
     file:close()
 
-    local new_parsed_messages = {}
+    local parsed_messages = {}
     if #entries > 0 then
         local live_offset = latest_entry_time - mp.get_property_native("duration") * 1000
         for _, entry in ipairs(entries) do
             local time = tonumber(entry.videoOffsetTimeMsec or entry.replayChatItemAction.videoOffsetTimeMsec)
             for _, action in ipairs(entry.replayChatItemAction.actions) do
-                local new_parsed_message = parse_chat_action(action, entry.isLive and (time - live_offset) or time)
-                if new_parsed_message then
-                    table.insert(new_parsed_messages, new_parsed_message)
+                local parsed_message = parse_chat_action(action, entry.isLive and (time - live_offset) or time)
+                if parsed_message then
+                    table.insert(parsed_messages, parsed_message)
                 end
             end
         end
     end
 
-    return new_parsed_messages
-end
-
-local function update_messages()
-    if filename then
-        if file_exists(filename) and not download_finished then
-            download_finished = true
-            local parsed_messages = get_parsed_messages(filename)
-            messages = {}
-            for _, message in ipairs(parsed_messages) do
-                add_comment(message.time / 1000, message.contents)
-            end
-        elseif file_exists(filename .. ".part") then
-            local new_parsed_messages = get_new_parsed_messages(filename .. ".part")
-            if new_parsed_messages then
-                for _, message in ipairs(new_parsed_messages) do
-                    add_comment(message.time / 1000, message.contents)
-                end
-            end
-        end
-    end
+    return parsed_messages
 end
 
 local function reset()
@@ -243,6 +301,35 @@ local function load_live_chat()
     end
 end
 
+local function update_messages()
+    local function add_messages(parsed_messages)
+        for _, parsed_message in ipairs(parsed_messages) do
+            table.insert(messages, {
+                text = parsed_message.contents,
+                time = parsed_message.time / 1000,
+                y = math.random(math.floor(osd_height * options.displayarea))
+            })
+        end
+    end
+
+    if filename then
+        if file_exists(filename) and not download_finished then
+            download_finished = true
+            messages = {}
+            local parsed_messages = get_parsed_messages(filename)
+            if parsed_messages then
+                add_messages(parsed_messages)
+            end
+        elseif file_exists(filename .. ".part") then
+            local parsed_messages = get_new_parsed_messages(filename .. ".part")
+            if parsed_messages then
+                add_messages(parsed_messages)
+            end
+        end
+    end
+end
+update_messages_timer = mp.add_periodic_timer(.1, update_messages)
+
 mp.register_event("file-loaded", function()
     if options.autoload then
         load_live_chat()
@@ -253,4 +340,19 @@ mp.add_hook("on_unload", 50, function()
     reset()
 end)
 
-local timer = mp.add_periodic_timer(.1, update_messages)
+mp.observe_property('osd-width', 'number', function(_, value)
+    osd_width = value or osd_width
+end)
+mp.observe_property('osd-height', 'number', function(_, value)
+    osd_height = value or osd_height
+end)
+mp.observe_property('display-fps', 'number', function(_, value)
+    if value then
+        local interval = 1 / value
+        render_timer = mp.add_periodic_timer(interval, render)
+    end
+end)
+
+mp.add_key_binding(nil, "toggle-danmaku", function()
+    options.danmaku_visibility = not options.danmaku_visibility
+end)
