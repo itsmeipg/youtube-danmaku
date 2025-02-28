@@ -1,259 +1,153 @@
 local options = {
-    live_chat_directory = mp.command_native({"expand-path", "~~/live_chat"}),
-    yt_dlp_path = 'yt-dlp',
-    show_author = true,
-    author_color = 'random',
-    author_border_color = '000000',
-    message_color = 'ffffff',
-    message_border_color = '000000',
-    font = mp.get_property_native('osd-font'),
-    font_size = 16,
-    border_size = 2
+    danmaku_visibility = true,
+
+    fontname = "sans-serif",
+    fontsize = 30,
+    bold = true,
+
+    duration = 10, -- May be innacurate (about third/half of a second) and more so for longer messages
+    transparency = 0, -- 0-255 (0 = opaque, 255 = transparent)
+    outline = 1,
+    shadow = 0,
+    displayarea = 0.7 -- Percentage of screen height for display area
 }
 
-require("danmaku_renderer")
-require("mp.options").read_options(options)
 local utils = require("mp.utils")
 
-local messages = {}
-local current_filename
-local download_finished = false
-local last_position = nil
-local live_offset = nil
+local overlay = mp.create_osd_overlay('ass-events')
+local width, height = 1920, 1080
+local timer
+local osd_width, osd_height = 0, 0
+comments = {}
 
-local function file_exists(path)
-    local f = io.open(path, "r")
-    if f ~= nil then
-        f:close()
-        return true
-    else
-        return false
+local function render()
+    if not options.danmaku_visibility or #comments == 0 then
+        overlay:remove()
+        return
     end
-end
-
-local function parse_message_runs(runs)
-    local message = ""
-    for _, data in ipairs(runs) do
-        if data.text then
-            message = message .. data.text
-        elseif data.emoji then
-            if data.emoji.isCustomEmoji then
-                message = message .. data.emoji.shortcuts[1]
+    
+    local pos = mp.get_property_number('time-pos')
+    local ass_events = {}
+    
+    -- Find the first comment that STARTS BEFORE OR AT current time + duration
+    -- (all comments that might be visible)
+    local first_idx = 1
+    local last_idx = #comments
+    
+    if pos > comments[1].time + options.duration then
+        -- Binary search to find first comment that might still be visible
+        local left, right = 1, #comments
+        while left <= right do
+            local mid = math.floor((left + right) / 2)
+            if comments[mid].time <= pos - options.duration then
+                first_idx = mid + 1
+                left = mid + 1
             else
-                message = message .. data.emoji.emojiId
+                right = mid - 1
             end
         end
     end
-    return message
-end
-
-local function parse_text_message(renderer)
-    local function string_to_color(str)
-        local hash = 5381
-        for i = 1, str:len() do
-            hash = (33 * hash + str:byte(i)) % 16777216
-        end
-        return hash
-    end
-
-    local id = renderer.authorExternalChannelId
-    local color = string_to_color(id)
-
-    local author = renderer.authorName and renderer.authorName.simpleText or '-'
-
-    local message = parse_message_runs(renderer.message.runs)
-
-    return {
-        type = 0,
-        author = author,
-        author_color = color,
-        contents = message,
-        time = nil -- Will be set by caller
-    }
-end
-
-local function parse_superchat_message(renderer)
-    local border_color = renderer.bodyBackgroundColor - 0xff000000
-    local text_color = renderer.bodyTextColor - 0xff000000
-    local money = renderer.purchaseAmountText.simpleText
-
-    local author = renderer.authorName and renderer.authorName.simpleText or '-'
-
-    local message = nil
-    if renderer.message then
-        message = parse_message_runs(renderer.message.runs)
-    end
-
-    return {
-        type = 1,
-        author = author,
-        money = money,
-        border_color = border_color,
-        text_color = text_color,
-        contents = message,
-        time = nil -- Will be set by caller
-    }
-end
-
-local function parse_chat_action(action, time)
-    if not action.addChatItemAction then
-        return nil
-    end
-
-    local item = action.addChatItemAction.item
-    local message = nil
-
-    if item.liveChatTextMessageRenderer then
-        message = parse_text_message(item.liveChatTextMessageRenderer)
-    elseif item.liveChatPaidMessageRenderer then
-        message = parse_superchat_message(item.liveChatPaidMessageRenderer)
-    end
-
-    if message then
-        message.time = time
-    end
-
-    return message
-end
-
-local function generate_messages(live_chat_json)
-    local result = {}
-    for line in io.lines(live_chat_json) do
-        local entry = utils.parse_json(line)
-        if entry.replayChatItemAction then
-            local time = tonumber(entry.videoOffsetTimeMsec or entry.replayChatItemAction.videoOffsetTimeMsec)
-            for _, action in ipairs(entry.replayChatItemAction.actions) do
-                local message = parse_chat_action(action, time)
-                if message then
-                    table.insert(result, message)
-                end
+    
+    if pos < comments[#comments].time then
+        -- Binary search to find last comment that might be visible
+        local left, right = first_idx, #comments
+        while left <= right do
+            local mid = math.floor((left + right) / 2)
+            if comments[mid].time <= pos then
+                left = mid + 1
+            else
+                last_idx = mid - 1
+                right = mid - 1
             end
         end
     end
-    return result
-end
-
-local function read_new_comments(filename)
-    local file = io.open(filename, "r")
-    if not file then
-        return
-    end
-
-    if not last_position then
-        for line in file:lines() do
-            last_position = file:seek()
-        end
-    else
-        file:seek("set", last_position)
-    end
-
-    local new_comments = {}
-
-    local lines = {}
-    local latest_line_time
-    for line in file:lines() do
-        last_position = file:seek()
-        local entry = utils.parse_json(line)
-        if entry and entry.replayChatItemAction then
-            latest_line_time = tonumber(entry.videoOffsetTimeMsec or entry.replayChatItemAction.videoOffsetTimeMsec)
-            table.insert(lines, entry)
-        end
-    end
-    file:close()
-
-    if #lines > 0 then
-        live_offset = latest_line_time - mp.get_property_native("duration") * 1000
-        for _, entry in ipairs(lines) do
-            local time = tonumber(entry.videoOffsetTimeMsec or entry.replayChatItemAction.videoOffsetTimeMsec)
-            for _, action in ipairs(entry.replayChatItemAction.actions) do
-                local comment = parse_chat_action(action, entry.isLive and (time - live_offset) or time)
-                if comment then
-                    table.insert(new_comments, comment)
-                end
+    
+    -- Process only comments in the range that could be visible
+    for i = first_idx, last_idx do
+        local comment = comments[i]
+        if pos >= comment.time and pos <= comment.time + options.duration then
+            -- Starting position
+            local x1 = width
+            local y1 = comment.y
+            -- End position
+            local x2 = 0 - comment.text:len() * options.fontsize
+            local y2 = y1
+            
+            local progress = (pos - comment.time) / options.duration
+            local current_x = tonumber(x1 + (x2 - x1) * progress)
+            local current_y = tonumber(y1 + (y2 - y1) * progress)
+            
+            if current_y <= tonumber(height * options.displayarea) then
+                local ass_text = comment.text and
+                                    string.format(
+                        "{\\rDefault\\an7\\q2\\pos(%.1f,%.1f)\\fn%s\\fs%d\\c&HFFFFFF&\\alpha&H%x\\bord%s\\shad%s\\b%s}%s",
+                        current_x, current_y, options.fontname, options.fontsize, options.transparency, options.outline,
+                        options.shadow, options.bold and 1 or 0, comment.text)
+                table.insert(ass_events, ass_text)
             end
         end
     end
-
-    return new_comments
+    
+    overlay.res_x = width
+    overlay.res_y = height
+    overlay.data = table.concat(ass_events, '\n')
+    overlay:update()
 end
 
-local function update_chat_overlay(time)
-    if current_filename then
-        if file_exists(current_filename) then
-            if download_finished == false then
-                download_finished = true
-                local awa = generate_messages(current_filename)
-                comments = {}
-                for i, message in ipairs(awa) do
-                    print(tostring(i))
-                    add_comment(message.time / 1000, message.contents, "&HFFFFFF&")
-                end
-            end
-        elseif file_exists(current_filename .. ".part") then
-            local new_messages = read_new_comments(current_filename .. ".part")
-            if new_messages then
-                for _, message in ipairs(new_messages) do
-                    add_comment(message.time / 1000, message.contents, "&HFFFFFF&")
-                end
-            end
-        end
-    end
-end
-
-local function download_live_chat(url, filename)
-    if file_exists(filename) then
-        return
-    end
-    mp.command_native_async({
-        name = "subprocess",
-        args = {'yt-dlp', '--skip-download', '--sub-langs=live_chat', url, '--write-sub', '-o', '%(id)s', '-P',
-                options.live_chat_directory}
+function add_comment(time, text)
+    table.insert(comments, {
+        text = text,
+        time = time,
+        y = math.random(math.floor(osd_height * options.displayarea))
     })
 end
 
-local function load_live_chat(filename)
-    local function live_chat_exists_remote(url)
-        local result = mp.command_native({
-            name = "subprocess",
-            capture_stdout = true,
-            args = {'yt-dlp', url, '--list-subs', '--quiet'}
+local function generate_sample_danmaku()
+    local comments = {}
+    local sample_texts = {"Hello world!", "Nice video!", "LOL", "This part is amazing!", "What is this?",
+                          "Great content!", "I can't believe this", "Too funny 😂", "First time watching",
+                          "Love this scene"}
+
+    local duration = mp.get_property_native("duration")
+    local density = 5
+
+    for i = 1, duration * density do
+        local time = math.random() * duration
+        local text = sample_texts[math.random(#sample_texts)]
+
+        table.insert(comments, {
+            text = text,
+            time = time,
+            y = math.random(math.floor(osd_height * options.displayarea))
         })
-        if result.status == 0 then
-            return string.find(result.stdout, "live_chat")
-        end
-        return false
     end
 
-    local path = mp.get_property_native('path')
-    if filename == nil then
-        local is_network = path:find('^http://') ~= nil or path:find('^https://') ~= nil
-        if is_network then
-            local id = path:gsub("^.*\\?v=", ""):gsub("&.*", "")
-            filename = string.format("%s/%s.live_chat.json", options.live_chat_directory, id)
-            if not file_exists(filename) or not file_exists(filename .. ".part") then
-                print('Checking for live chat on remote...')
-                if live_chat_exists_remote(path) then
-                    print('Downloading live chat replay...')
-                    download_live_chat(path, filename)
-                end
-            end
-        else
-            local base_path = path:match('(.+)%..+$') or path
-            filename = base_path .. '.live_chat.json'
-        end
-    end
-    current_filename = filename
+    return comments
 end
 
-mp.add_forced_key_binding("c", "load-chat", function()
-    current_filename = nil
-    last_position = nil
-    download_finished = false
-    live_offset = nil
-    messages = {}
-    load_live_chat()
+local function toggle_danmaku()
+    options.danmaku_visibility  = not options.danmaku_visibility
+end
+
+mp.observe_property('osd-width', 'number', function(_, value)
+    osd_width = value or osd_width
+end)
+mp.observe_property('osd-height', 'number', function(_, value)
+    osd_height = value or osd_height
+end)
+mp.observe_property('display-fps', 'number', function(_, value)
+    if value then
+        local interval = 1 / value
+        timer = mp.add_periodic_timer(interval, render)
+    end
 end)
 
-mp.observe_property("time-pos", "native", function(_, time)
-    update_chat_overlay(time)
+mp.add_hook("on_unload", 50, function()
+    comments = {}
 end)
+
+mp.add_forced_key_binding("Ctrl+d", "simulate-comments", function()
+    comments = generate_sample_danmaku()
+end)
+
+mp.add_forced_key_binding("s", "toggle-danmaku", toggle_danmaku)
