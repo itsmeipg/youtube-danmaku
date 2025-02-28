@@ -1,5 +1,5 @@
 local options = {
-    enabled = true,
+    danmaku_visibility = true,
 
     fontname = "sans-serif",
     fontsize = 30,
@@ -21,7 +21,7 @@ local osd_width, osd_height = 0, 0
 comments = {}
 
 local function render()
-    if not options.enabled or #comments == 0 then
+    if not options.danmaku_visibility or #comments == 0 then
         overlay:remove()
         return
     end
@@ -94,7 +94,7 @@ local function render()
     overlay:update()
 end
 
-function add_comment(time, text, color)
+function add_comment(time, text)
     table.insert(comments, {
         text = text,
         time = time,
@@ -126,7 +126,7 @@ local function generate_sample_danmaku()
 end
 
 local function toggle_danmaku()
-    options.enabled  = not options.enabled
+    options.danmaku_visibility  = not options.danmaku_visibility
 end
 
 mp.observe_property('osd-width', 'number', function(_, value)
