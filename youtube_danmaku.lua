@@ -270,17 +270,17 @@ local function update_messages()
         end
     end
 
-    if filename then
-        if file_exists(filename) and not download_finished then
+    if filename and not download_finished then
+        if file_exists(filename .. ".part") then
+            local parsed_messages = get_new_parsed_messages(filename .. ".part")
+            if parsed_messages then
+                add_messages(parsed_messages)
+            end
+        elseif file_exists(filename) then
             download_finished = true
             local parsed_messages = get_parsed_messages(filename)
             if parsed_messages then
                 messages = {}
-                add_messages(parsed_messages)
-            end
-        elseif file_exists(filename .. ".part") then
-            local parsed_messages = get_new_parsed_messages(filename .. ".part")
-            if parsed_messages then
                 add_messages(parsed_messages)
             end
         end
