@@ -5,12 +5,13 @@ local options = {
     danmaku_visibility = true,
 
     fontname = "sans-serif",
-    fontsize = 30,
+    fontsize = 55,
     bold = true,
     transparency = 0, -- 0-255 (0 = opaque, 255 = transparent)
     outline = 1,
     shadow = 0,
     duration = 10, -- May be innacurate (about third/half of a second) and more so for longer messages
+    time_gap = 1,
     displayarea = 0.7 -- Percentage of screen height for display area
 }
 
@@ -45,17 +46,15 @@ local function render()
     local pos = mp.get_property_number('time-pos')
     local ass_events = {}
 
-    -- Find the first comment that STARTS BEFORE OR AT current time + duration
-    -- (all messages that might be visible)
+    -- Binary search
     local first_idx = 1
     local last_idx = #messages
 
     if pos > messages[1].time + options.duration then
-        -- Binary search to find first comment that might still be visible
         local left, right = 1, #messages
         while left <= right do
             local mid = math.floor((left + right) / 2)
-            if messages[mid].time <= pos - options.duration then
+            if messages[mid].time <= pos - options.duration * 2 then
                 first_idx = mid + 1
                 left = mid + 1
             else
@@ -65,7 +64,6 @@ local function render()
     end
 
     if pos < messages[#messages].time then
-        -- Binary search to find last comment that might be visible
         local left, right = first_idx, #messages
         while left <= right do
             local mid = math.floor((left + right) / 2)
@@ -78,13 +76,43 @@ local function render()
         end
     end
 
-    -- Process only messages in the range that could be visible
+    local lane_spacing = options.fontsize
+    local num_lanes = math.floor((height * options.displayarea) / lane_spacing)
+    local lane_last_used = {}
+    for i = 1, num_lanes do
+        lane_last_used[i] = -math.huge
+    end
+
     for i = first_idx, last_idx do
         local comment = messages[i]
+
+        local lane
+        for j = 1, num_lanes do
+            if comment.time - lane_last_used[j] >= options.time_gap then
+                lane = j
+                lane_last_used[j] = comment.time
+                break
+            end
+        end
+
+        -- If no lane available, use the lane with oldest message
+        if not lane then
+            local oldest_time = math.huge
+            local oldest_lane = 1
+            for j = 1, num_lanes do
+                if lane_last_used[j] < oldest_time then
+                    oldest_time = lane_last_used[j]
+                    oldest_lane = j
+                end
+            end
+            lane = oldest_lane
+            lane_last_used[lane] = comment.time
+        end
+
         if comment.text and pos >= comment.time and pos <= comment.time + options.duration then
             -- Starting position
             local x1 = width
-            local y1 = comment.y
+            local y1 = (lane - 1) * lane_spacing
             -- End position
             local x2 = 0 - comment.text:len() * options.fontsize
             local y2 = y1
@@ -108,16 +136,6 @@ local function render()
     overlay.res_y = height
     overlay.data = table.concat(ass_events, '\n')
     overlay:update()
-end
-
-local function file_exists(path)
-    local file = io.open(path, "r")
-    if file then
-        file:close()
-        return true
-    else
-        return false
-    end
 end
 
 local function parse_message_runs(runs)
@@ -154,7 +172,7 @@ local function parse_text_message(renderer)
         type = 0,
         author = author,
         author_color = color,
-        contents = message,
+        text = message,
         time = nil -- Will be set by caller
     }
 end
@@ -175,7 +193,7 @@ local function parse_superchat_message(renderer)
         money = money,
         border_color = border_color,
         text_color = text_color,
-        contents = message,
+        text = message,
         time = nil -- Will be set by caller
     }
 end
@@ -204,7 +222,7 @@ local function get_parsed_messages(live_chat_json)
     for line in io.lines(live_chat_json) do
         local entry = utils.parse_json(line)
         if entry.replayChatItemAction then
-            local time = tonumber(entry.videoOffsetTimeMsec or entry.replayChatItemAction.videoOffsetTimeMsec)
+            local time = tonumber(entry.videoOffsetTimeMsec or entry.replayChatItemAction.videoOffsetTimeMsec) / 1000
             for _, action in ipairs(entry.replayChatItemAction.actions) do
                 local parsed_message = parse_chat_action(action, time)
                 if parsed_message then
@@ -236,7 +254,8 @@ local function get_new_parsed_messages(filename)
         last_position = file:seek()
         local entry = utils.parse_json(line)
         if entry and entry.replayChatItemAction then
-            latest_entry_time = tonumber(entry.videoOffsetTimeMsec or entry.replayChatItemAction.videoOffsetTimeMsec)
+            latest_entry_time = tonumber(entry.videoOffsetTimeMsec or entry.replayChatItemAction.videoOffsetTimeMsec) /
+                                    1000
             table.insert(entries, entry)
         end
     end
@@ -244,9 +263,9 @@ local function get_new_parsed_messages(filename)
 
     local parsed_messages = {}
     if #entries > 0 then
-        local live_offset = latest_entry_time - mp.get_property_native("duration") * 1000
+        local live_offset = latest_entry_time - mp.get_property_native("duration")
         for _, entry in ipairs(entries) do
-            local time = tonumber(entry.videoOffsetTimeMsec or entry.replayChatItemAction.videoOffsetTimeMsec)
+            local time = tonumber(entry.videoOffsetTimeMsec or entry.replayChatItemAction.videoOffsetTimeMsec) / 1000
             for _, action in ipairs(entry.replayChatItemAction.actions) do
                 local parsed_message = parse_chat_action(action, entry.isLive and (time - live_offset) or time)
                 if parsed_message then
@@ -259,29 +278,52 @@ local function get_new_parsed_messages(filename)
     return parsed_messages
 end
 
+local function file_exists(path)
+    local file = io.open(path, "r")
+    if file then
+        file:close()
+        return true
+    else
+        return false
+    end
+end
+
 local function update_messages()
-    local function add_messages(parsed_messages)
-        for _, parsed_message in ipairs(parsed_messages) do
-            table.insert(messages, {
-                text = parsed_message.contents,
-                time = parsed_message.time / 1000,
-                y = math.random(math.floor(height * options.displayarea))
-            })
+    local function merge_sorted_arrays(a, b)
+        local merged = {}
+        local i, j = 1, 1
+
+        while i <= #a and j <= #b do
+            if a[i].time < b[j].time then
+                table.insert(merged, a[i])
+                i = i + 1
+            else
+                table.insert(merged, b[j])
+                j = j + 1
+            end
         end
+
+        return table.move(a, i, #a, table.move(b, j, #b, merged))
     end
 
     if filename and not download_finished then
         if file_exists(filename .. ".part") then
             local parsed_messages = get_new_parsed_messages(filename .. ".part")
             if parsed_messages then
-                add_messages(parsed_messages)
+                table.sort(parsed_messages, function(a, b)
+                    return a.time < b.time
+                end)
+                messages = merge_sorted_arrays(messages, parsed_messages)
             end
         elseif file_exists(filename) then
             download_finished = true
             local parsed_messages = get_parsed_messages(filename)
             if parsed_messages then
                 messages = {}
-                add_messages(parsed_messages)
+                table.sort(parsed_messages, function(a, b)
+                    return a.time < b.time
+                end)
+                messages = parsed_messages
             end
         end
     end
