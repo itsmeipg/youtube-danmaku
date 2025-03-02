@@ -7,7 +7,6 @@ Script gets newest messages since live chat file downloaded. Comment times are n
 
 # Todo
 - Reverse direction
-- Lanes and lane management
 - Overlapping transparency control
 - Superchat boxes
 - Member messages are green/customizable
