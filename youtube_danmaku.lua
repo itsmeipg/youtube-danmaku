@@ -45,16 +45,17 @@ local function render()
 
     local pos = mp.get_property_number('time-pos')
     local ass_events = {}
+    local lane_spacing = options.fontsize
+    local num_lanes = math.floor((height * options.displayarea) / lane_spacing)
 
     -- Binary search
     local first_idx = 1
     local last_idx = #messages
-
     if pos > messages[1].time + options.duration then
         local left, right = 1, #messages
         while left <= right do
             local mid = math.floor((left + right) / 2)
-            if messages[mid].time <= pos - options.duration * 2 then
+            if messages[mid].time <= pos - options.duration - options.time_gap * (num_lanes - 1) then
                 first_idx = mid + 1
                 left = mid + 1
             else
@@ -62,7 +63,6 @@ local function render()
             end
         end
     end
-
     if pos < messages[#messages].time then
         local left, right = first_idx, #messages
         while left <= right do
@@ -76,13 +76,10 @@ local function render()
         end
     end
 
-    local lane_spacing = options.fontsize
-    local num_lanes = math.floor((height * options.displayarea) / lane_spacing)
     local lane_last_used = {}
     for i = 1, num_lanes do
         lane_last_used[i] = -math.huge
     end
-
     for i = first_idx, last_idx do
         local comment = messages[i]
 
