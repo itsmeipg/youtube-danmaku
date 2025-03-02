@@ -5,8 +5,8 @@ Takes about 10 seconds to start working.
 # Livestream implementation logic
 Script gets newest messages since live chat file downloaded. Comment times are not synced with the video, but synced relative to each other. Script uses livestream duration to sync newly downloaded comments with livestream. YT-DLP downloads comments in batches, so syncing the whole batch to one point of time (livestream duration) would display comments all at once. Script uses the last comment of each batch to calculate the offset between stream and newly downloaded comments. Offset is applied to each comment to sync them with the livestream and maintain their timing relative to each other.
 
-# Todo
-- Reverse direction
+# Might not be possible but I'll try to add it
+- Reverse direction (probably possible)
 - Overlapping transparency control
 - Superchat boxes
 - Member messages are green/customizable
