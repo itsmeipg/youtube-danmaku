@@ -303,7 +303,7 @@ local function update_messages()
             end
         end
 
-        return table.move(a, i, #a, table.move(b, j, #b, merged))
+        return table.move(b, j, #b, #merged + 1, table.move(a, i, #a, #merged + 1, merged))
     end
 
     if filename and not download_finished then
